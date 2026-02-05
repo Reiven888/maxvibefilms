@@ -1,94 +1,169 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="https://fav.farm/🎬" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MaxVibeFilms</title>
-    
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
-    
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Montserrat', 'sans-serif'],
-              mono: ['Orbitron', 'monospace'],
-            },
-            colors: {
-              vibe: {
-                dark: '#0f172a',
-                purple: '#7c3aed',
-                cyan: '#06b6d4',
-                pink: '#db2777',
-              }
-            },
-            animation: {
-              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'float': 'float 3s ease-in-out infinite',
-            },
-            keyframes: {
-              float: {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-10px)' },
-              }
-            }
-          }
-        }
-      }
-    </script>
-    
+    <meta name="description" content="Рандомайзер IMDb-фильмов по году и диапазону голосов" />
     <style>
+      :root {
+        color-scheme: dark;
+        --bg: #09090f;
+        --card: #141424;
+        --accent: #8b5cf6;
+        --accent-2: #22d3ee;
+        --text: #f4f4f5;
+        --muted: #a1a1aa;
+        --ok: #34d399;
+        --warn: #f59e0b;
+      }
+
+      * { box-sizing: border-box; }
+
       body {
-        background-color: #0f172a;
-        color: #fff;
         margin: 0;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: radial-gradient(circle at top, #1c1b39, var(--bg) 45%);
+        color: var(--text);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
       }
-      .glass-panel {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+
+      .app {
+        width: min(860px, 100%);
+        background: linear-gradient(145deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+        border: 1px solid rgba(255,255,255,.12);
+        border-radius: 20px;
+        padding: 24px;
+        backdrop-filter: blur(8px);
+        box-shadow: 0 30px 80px rgba(0,0,0,.35);
       }
-      #loading {
+
+      h1 { margin: 0; font-size: clamp(1.8rem, 4vw, 2.7rem); }
+      .subtitle { margin: 12px 0 0; color: var(--muted); }
+
+      .actions {
+        margin-top: 24px;
         display: flex;
-        justify-content: center;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 14px;
+        padding: 12px 18px;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #08080a;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        cursor: pointer;
+        transition: transform .15s ease, opacity .15s ease;
+      }
+
+      button.secondary { background: linear-gradient(135deg, #22c55e, #06b6d4); }
+      button:disabled { opacity: .55; cursor: not-allowed; }
+      button:not(:disabled):hover { transform: translateY(-1px); }
+      button:not(:disabled):active { transform: translateY(1px); }
+
+      .result {
+        margin-top: 24px;
+        border-top: 1px solid rgba(255,255,255,.12);
+        padding-top: 20px;
+        display: none;
+      }
+
+      .row { display: flex; justify-content: space-between; gap: 16px; margin: 10px 0; }
+      .label { color: var(--muted); }
+      .value { font-weight: 700; }
+
+      .imdb-link {
+        margin-top: 14px;
+        display: inline-block;
+        color: #0b1020;
+        background: #67e8f9;
+        padding: 10px 14px;
+        border-radius: 10px;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .movie-card {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 16px;
+        background: rgba(255,255,255,.03);
+        border: 1px solid rgba(255,255,255,.12);
+        border-radius: 16px;
+        padding: 14px;
+      }
+
+      .movie-poster {
+        width: 160px;
+        aspect-ratio: 2/3;
+        border-radius: 10px;
+        background: #1f2937;
+        object-fit: cover;
+      }
+
+      .movie-title { margin: 0; font-size: 1.3rem; }
+      .movie-meta { margin: 10px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+      .badge {
+        display: inline-flex;
         align-items: center;
-        height: 100vh;
-        font-family: monospace;
-        color: #06b6d4;
-        font-size: 1.2rem;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: .9rem;
+        font-weight: 700;
+      }
+      .badge.rating { background: rgba(52,211,153,.15); color: #6ee7b7; border: 1px solid rgba(52,211,153,.35); }
+      .badge.votes { background: rgba(139,92,246,.16); color: #c4b5fd; border: 1px solid rgba(139,92,246,.35); }
+      .movie-description { margin: 8px 0 0; color: #e4e4e7; line-height: 1.4; }
+      .status { margin-top: 12px; color: var(--warn); font-weight: 600; min-height: 1.4em; }
+
+      @media (max-width: 680px) {
+        .movie-card { grid-template-columns: 1fr; }
+        .movie-poster { width: 120px; }
       }
     </style>
-
-    <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.2.0",
-    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-    "lucide-react": "https://esm.sh/lucide-react@0.294.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+  </head>
   <body>
-    <div id="root">
-        <div id="loading">ЗАГРУЗКА ВАЙБА...</div>
-    </div>
-    
-    <!-- Load the combined application script -->
-    <script type="text/babel" data-type="module" src="./main.js"></script>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <main class="app">
+      <h1>🎬 MaxVibeFilms</h1>
+      <p class="subtitle">Рандом по году и голосам IMDb + первый фильм из выдачи. Если видел — жми «Я уже видел».</p>
+
+      <div class="actions">
+        <button id="randomizeBtn" type="button">Рандом</button>
+        <button id="nextMovieBtn" type="button" class="secondary" disabled>Я уже видел</button>
+      </div>
+
+      <section id="result" class="result" aria-live="polite">
+        <div class="row"><span class="label">Год:</span><span id="yearValue" class="value"></span></div>
+        <div class="row"><span class="label">Категория голосов (1–11):</span><span id="tierValue" class="value"></span></div>
+        <div class="row"><span class="label">Диапазон голосов:</span><span id="votesValue" class="value"></span></div>
+        <a id="imdbSearchLink" class="imdb-link" target="_blank" rel="noopener noreferrer">Открыть IMDb-поиск</a>
+
+        <article class="movie-card" id="movieCard">
+          <img id="poster" class="movie-poster" alt="Постер фильма" />
+          <div>
+            <h2 id="movieTitle" class="movie-title">—</h2>
+            <div class="movie-meta">
+              <span class="badge rating" id="movieRating">⭐ Рейтинг: —</span>
+              <span class="badge votes" id="movieVotes">🗳 Оценок: —</span>
+            </div>
+            <p id="movieDescription" class="movie-description">Описание появится после генерации подборки.</p>
+            <a id="movieLink" class="imdb-link" target="_blank" rel="noopener noreferrer" style="display:none; margin-top:12px">Открыть страницу фильма</a>
+          </div>
+        </article>
+
+        <p class="status" id="statusText"></p>
+      </section>
+    </main>
+
+    <script src="./main.js"></script>
+  </body>
 </html>
