@@ -2,32 +2,37 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" />
+    <link rel="icon" type="image/svg+xml" href="https://fav.farm/🎬" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MaxVibeFilms</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
     <script>
       tailwind.config = {
         theme: {
           extend: {
+            fontFamily: {
+              sans: ['Montserrat', 'sans-serif'],
+              mono: ['Orbitron', 'monospace'],
+            },
             colors: {
               vibe: {
-                dark: '#0f0c29',
-                mid: '#302b63',
-                light: '#24243e',
-                accent: '#f7b733',
-                purple: '#b06ab3',
-                neon: '#00f260',
+                dark: '#0f172a',
+                purple: '#7c3aed',
+                cyan: '#06b6d4',
+                pink: '#db2777',
               }
             },
             animation: {
-              'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'glow': 'glow 2s ease-in-out infinite alternate',
+              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'float': 'float 3s ease-in-out infinite',
             },
             keyframes: {
-              glow: {
-                '0%': { boxShadow: '0 0 5px #b06ab3, 0 0 10px #b06ab3' },
-                '100%': { boxShadow: '0 0 20px #f7b733, 0 0 30px #f7b733' },
+              float: {
+                '0%, 100%': { transform: 'translateY(0)' },
+                '50%': { transform: 'translateY(-10px)' },
               }
             }
           }
@@ -36,17 +41,22 @@
     </script>
     <style>
       body {
-        background: linear-gradient(to right, #0f0c29, #302b63, #24243e);
-        color: white;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #000;
+        color: #fff;
+      }
+      .glass-panel {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
       }
     </style>
   <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.4",
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/"
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0"
   }
 }
 </script>
