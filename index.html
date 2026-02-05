@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="https://fav.farm/🎬" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MaxVibeFilms v2</title>
+    <title>MaxVibeFilms</title>
     
-    <!-- Tailwind -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
     <!-- Fonts -->
@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
     
-    <!-- Babel for in-browser JSX compilation -->
+    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script>
@@ -50,7 +50,7 @@
     
     <style>
       body {
-        background-color: #0f172a; /* Dark background default */
+        background-color: #0f172a;
         color: #fff;
         margin: 0;
       }
@@ -66,6 +66,7 @@
         height: 100vh;
         font-family: monospace;
         color: #06b6d4;
+        font-size: 1.2rem;
       }
     </style>
 
@@ -81,12 +82,13 @@
 </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-  <body style="background-color: #0f172a;">
+  <body>
     <div id="root">
-      <div id="loading">ЗАГРУЗКА ВАЙБА...</div>
+        <div id="loading">ЗАГРУЗКА ВАЙБА...</div>
     </div>
-    <!-- Load the main entry point as a Babel script -->
-    <script type="text/babel" data-type="module" src="./index.js"></script>
+    
+    <!-- Load the combined application script -->
+    <script type="text/babel" data-type="module" src="./main.js"></script>
   <script type="module" src="/index.tsx"></script>
 </body>
 </html>
