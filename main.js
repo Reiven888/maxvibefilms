@@ -11,6 +11,7 @@ const FETCH_STRATEGIES = [
     buildUrl: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   },
   {
+    // fallback без CORS-прокси; возвращает текстовую версию страницы
     name: 'jina-reader',
     buildUrl: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`,
   },
@@ -19,6 +20,7 @@ const FETCH_STRATEGIES = [
 const state = {
   movies: [],
   currentIndex: -1,
+  currentSearchUrl: '',
 };
 
 function randomInt(min, max) {
@@ -26,8 +28,13 @@ function randomInt(min, max) {
 }
 
 function getVotesRangeByTier(tier) {
-  if (tier === 1) return { minVotes: 20000, maxVotes: 100000 };
-  if (tier === 11) return { minVotes: 1000001, maxVotes: null };
+  if (tier === 1) {
+    return { minVotes: 20000, maxVotes: 100000 };
+  }
+
+  if (tier === 11) {
+    return { minVotes: 1000001, maxVotes: null };
+  }
 
   return {
     minVotes: (tier - 1) * 100000 + 1,
@@ -43,7 +50,9 @@ function buildImdbSearchUrl(year, minVotes, maxVotes) {
 
 function formatVotesRange(minVotes, maxVotes) {
   const formatter = new Intl.NumberFormat('ru-RU');
-  if (maxVotes === null) return `от ${formatter.format(minVotes)} и выше`;
+  if (maxVotes === null) {
+    return `от ${formatter.format(minVotes)} и выше`;
+  }
   return `${formatter.format(minVotes)} — ${formatter.format(maxVotes)}`;
 }
 
@@ -65,10 +74,14 @@ async function fetchHtmlWithFallback(url) {
   for (const strategy of FETCH_STRATEGIES) {
     try {
       const response = await fetch(strategy.buildUrl(url));
-      if (!response.ok) throw new Error(`${strategy.name}: HTTP ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`${strategy.name}: HTTP ${response.status}`);
+      }
 
       const text = await response.text();
-      if (!text || text.length < 200) throw new Error(`${strategy.name}: пустой ответ`);
+      if (!text || text.length < 200) {
+        throw new Error(`${strategy.name}: пустой ответ`);
+      }
 
       return { text, strategy: strategy.name };
     } catch (error) {
@@ -89,65 +102,79 @@ function normalizePosterUrl(raw) {
 
 function parseMoviesFromSearch(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  const titleAnchors = [...doc.querySelectorAll('a[href*="/title/tt"]')];
 
-  const unique = new Set();
+  const cardSelectors = [
+    '[data-testid="title-list-item"]',
+    '.lister-item.mode-advanced',
+    '.ipc-metadata-list-summary-item',
+  ];
+
+  let cards = [];
+  for (const selector of cardSelectors) {
+    cards = [...doc.querySelectorAll(selector)];
+    if (cards.length > 0) break;
+  }
+
   const movies = [];
 
-  for (const anchor of titleAnchors) {
-    const href = anchor.getAttribute('href') || '';
+  for (const card of cards) {
+    const titleLink = card.querySelector('a[href*="/title/tt"]');
+    const href = titleLink?.getAttribute('href') || '';
     const match = href.match(/\/title\/(tt\d+)\//);
     if (!match) continue;
 
     const imdbId = match[1];
-    if (unique.has(imdbId)) continue;
-    unique.add(imdbId);
+    const url = `https://www.imdb.com/title/${imdbId}/`;
 
-    const title = anchor.textContent?.trim() || `Фильм ${imdbId}`;
-    if (title.length < 2) continue;
+    const title =
+      titleLink?.textContent?.trim() ||
+      card.querySelector('h3')?.textContent?.trim() ||
+      'Без названия';
+
+    const ratingNode =
+      card.querySelector('[data-testid="rating-group--imdb-rating"]') ||
+      card.querySelector('.ratings-imdb-rating strong') ||
+      card.querySelector('[aria-label*="IMDb rating"]');
+    const ratingText = ratingNode?.textContent?.trim() || '';
+    const ratingMatch = ratingText.match(/\d(?:\.\d)?/);
+    const rating = ratingMatch ? ratingMatch[0] : null;
+
+    const votesText = card.textContent || '';
+    const votesMatch = votesText.match(/([\d,\.\s]+)\s*votes/i);
+    const votes = votesMatch ? votesMatch[1].replace(/[\s,.](?=\d{3}\b)/g, '') : null;
+
+    const description =
+      card.querySelector('[data-testid="plot"]')?.textContent?.trim() ||
+      card.querySelector('.text-muted')?.textContent?.trim() ||
+      'Краткое описание отсутствует.';
+
+    const imageRaw = card.querySelector('img')?.getAttribute('src') || '';
 
     movies.push({
       imdbId,
       title,
-      rating: null,
-      votes: null,
-      description: 'Загружаю описание...',
-      image: '',
-      url: `https://www.imdb.com/title/${imdbId}/`,
-      enriched: false,
+      rating,
+      votes,
+      description,
+      image: normalizePosterUrl(imageRaw),
+      url,
     });
   }
 
-  return movies;
-}
-
-function extractMovieFromLdJson(html, fallbackUrl) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const scripts = [...doc.querySelectorAll('script[type="application/ld+json"]')];
-
-  for (const script of scripts) {
-    try {
-      const data = JSON.parse(script.textContent || '{}');
-      const candidates = Array.isArray(data) ? data : [data];
-
-      for (const item of candidates) {
-        if (item?.['@type'] !== 'Movie') continue;
-
-        return {
-          title: item.name || 'Без названия',
-          rating: item.aggregateRating?.ratingValue || null,
-          votes: item.aggregateRating?.ratingCount || null,
-          description: item.description || 'Краткое описание отсутствует.',
-          image: normalizePosterUrl(item.image || ''),
-          url: item.url || fallbackUrl,
-        };
-      }
-    } catch (_) {
-      // ignore invalid JSON blocks
-    }
+  if (movies.length > 0) {
+    return movies;
   }
 
-  return null;
+  const fallbackIds = [...new Set((html.match(/tt\d{7,9}/g) || []))];
+  return fallbackIds.map((id) => ({
+    imdbId: id,
+    title: `Фильм ${id}`,
+    rating: null,
+    votes: null,
+    description: 'Подробности не удалось извлечь, но ссылку на фильм можно открыть в IMDb.',
+    image: '',
+    url: `https://www.imdb.com/title/${id}/`,
+  }));
 }
 
 const randomizeBtn = document.getElementById('randomizeBtn');
@@ -173,12 +200,16 @@ function setLoading(isLoading) {
 
 function renderMovie(movie) {
   movieTitle.textContent = movie.title;
-  movieDescription.textContent = movie.description || 'Краткое описание отсутствует.';
+  movieDescription.textContent = movie.description;
   movieRating.textContent = `⭐ Рейтинг: ${movie.rating ?? '—'}`;
   movieVotes.textContent = `🗳 Оценок: ${formatVotesCount(movie.votes)}`;
 
-  movieLink.href = movie.url;
-  movieLink.style.display = 'inline-block';
+  if (movie.url) {
+    movieLink.href = movie.url;
+    movieLink.style.display = 'inline-block';
+  } else {
+    movieLink.style.display = 'none';
+  }
 
   if (movie.image) {
     poster.src = movie.image;
@@ -189,29 +220,7 @@ function renderMovie(movie) {
   }
 }
 
-async function enrichMovieData(movie) {
-  if (movie.enriched) return movie;
-
-  try {
-    const { text } = await fetchHtmlWithFallback(movie.url);
-    const details = extractMovieFromLdJson(text, movie.url);
-
-    if (details) {
-      Object.assign(movie, details, { enriched: true });
-      return movie;
-    }
-
-    movie.description = 'Краткое описание отсутствует.';
-    movie.enriched = true;
-    return movie;
-  } catch {
-    movie.description = movie.description || 'Не удалось загрузить описание. Открой страницу IMDb.';
-    movie.enriched = true;
-    return movie;
-  }
-}
-
-async function showMovieByIndex(index) {
+function showMovieByIndex(index) {
   const movie = state.movies[index];
   if (!movie) {
     statusText.textContent = 'Нет фильма, поэтому нужна новая подборка.';
@@ -219,12 +228,7 @@ async function showMovieByIndex(index) {
     return;
   }
 
-  nextMovieBtn.disabled = true;
-  statusText.textContent = `Загружаю фильм ${index + 1} из ${state.movies.length}...`;
-
-  const enriched = await enrichMovieData(movie);
-  renderMovie(enriched);
-
+  renderMovie(movie);
   state.currentIndex = index;
   nextMovieBtn.disabled = false;
   statusText.textContent = `Фильм ${index + 1} из ${state.movies.length}. Если видел — жми «Я уже видел».`;
@@ -242,21 +246,22 @@ async function generateSelection() {
     tierValue.textContent = String(criteria.tier);
     votesValue.textContent = formatVotesRange(criteria.minVotes, criteria.maxVotes);
     imdbSearchLink.href = imdbUrl;
-    imdbSearchLink.textContent = 'Открыть IMDb-поиск';
+    imdbSearchLink.textContent = imdbUrl;
 
     resultSection.style.display = 'block';
+    state.currentSearchUrl = imdbUrl;
 
     const { text: searchHtml, strategy } = await fetchHtmlWithFallback(imdbUrl);
     state.movies = parseMoviesFromSearch(searchHtml);
     state.currentIndex = -1;
 
     if (state.movies.length === 0) {
-      statusText.textContent = `IMDb не вернул фильмы по этой выборке. Источник: ${strategy}. Нажми «Рандом» ещё раз.`;
+      statusText.textContent = 'IMDb не вернул фильмы по этой выборке. Нажми «Рандом» ещё раз.';
       nextMovieBtn.disabled = true;
       return;
     }
 
-    await showMovieByIndex(0);
+    showMovieByIndex(0);
     statusText.textContent += ` Источник: ${strategy}.`;
   } catch (error) {
     statusText.textContent = `Ошибка загрузки подборки: ${error.message}. Попробуй ещё раз.`;
@@ -266,7 +271,7 @@ async function generateSelection() {
   }
 }
 
-async function showNextMovie() {
+function showNextMovie() {
   const nextIndex = state.currentIndex + 1;
   if (nextIndex >= state.movies.length) {
     statusText.textContent = 'Нет фильма, поэтому новая подборка. Нажми «Рандом». ';
@@ -274,7 +279,7 @@ async function showNextMovie() {
     return;
   }
 
-  await showMovieByIndex(nextIndex);
+  showMovieByIndex(nextIndex);
 }
 
 randomizeBtn.addEventListener('click', () => {
