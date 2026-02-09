@@ -1,247 +1,268 @@
 const YEAR_MIN = 1975;
 const YEAR_MAX = 2025;
-const MAX_POOL = 100;
+const MAX_RESULTS = 50;
+const MAX_SEARCH_RETRIES = 20;
 
-const els = {
-  randomBtn: document.getElementById('randomBtn'),
-  searchLink: document.getElementById('searchLink'),
-  yearValue: document.getElementById('yearValue'),
-  status: document.getElementById('status'),
-  movieCard: document.getElementById('movieCard'),
-  posterWrap: document.getElementById('posterWrap'),
-  movieTitle: document.getElementById('movieTitle'),
-  movieRating: document.getElementById('movieRating'),
-  movieVotes: document.getElementById('movieVotes'),
-  movieYear: document.getElementById('movieYear'),
-  movieTop: document.getElementById('movieTop'),
-  movieDescription: document.getElementById('movieDescription'),
-  imdbTitleLink: document.getElementById('imdbTitleLink'),
-};
+const randomBtn = document.getElementById('randomBtn');
+const searchLink = document.getElementById('searchLink');
+const selectedYearEl = document.getElementById('selectedYear');
+const selectedRankEl = document.getElementById('selectedRank');
+const statusEl = document.getElementById('status');
 
-const proxies = [
+const cardEl = document.getElementById('movieCard');
+const titleEl = document.getElementById('title');
+const ratingChipEl = document.getElementById('ratingChip');
+const votesChipEl = document.getElementById('votesChip');
+const rankChipEl = document.getElementById('rankChip');
+const descriptionEl = document.getElementById('description');
+const posterEl = document.getElementById('poster');
+const movieLinkEl = document.getElementById('movieLink');
+
+const parser = new DOMParser();
+
+const proxyBuilders = [
   {
     name: 'allorigins',
-    build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
   },
   {
-    name: 'corsproxy.io',
-    build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    name: 'corsproxy',
+    build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`
   },
   {
     name: 'r.jina.ai',
-    build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`,
-  },
+    build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`
+  }
 ];
 
-const translators = [
-  async (text) => {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=${encodeURIComponent(text)}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    return Array.isArray(payload?.[0]) ? payload[0].map((item) => item?.[0] || '').join('').trim() : '';
-  },
-  async (text) => {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ru`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    return payload?.responseData?.translatedText?.trim() || '';
-  },
-];
-
-function setStatus(text, type = '') {
-  els.status.textContent = text;
-  els.status.className = `status ${type}`.trim();
+function setStatus(message, type = '') {
+  statusEl.textContent = message;
+  statusEl.className = `status ${type}`.trim();
 }
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function buildSearchUrl(year) {
-  return `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
+function numberWithSpaces(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  return new Intl.NumberFormat('ru-RU').format(number);
 }
 
-async function fetchWithFallback(url) {
-  const errors = [];
+async function fetchWithFallback(url, note) {
+  let lastError = null;
 
-  for (const proxy of proxies) {
+  for (let i = 0; i < proxyBuilders.length; i += 1) {
+    const proxy = proxyBuilders[i];
+    const proxiedUrl = proxy.build(url);
+
     try {
-      const response = await fetch(proxy.build(url), {
+      setStatus(`Загрузка (${note}) через ${proxy.name}...`, 'warning');
+      const response = await fetch(proxiedUrl, {
+        method: 'GET',
         headers: {
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
+          Accept: 'text/html,application/json;q=0.9,*/*;q=0.8'
+        }
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const text = await response.text();
-      if (!text || text.length < 80) throw new Error('Пустой ответ');
+      if (!text || text.length < 50) {
+        throw new Error('Пустой или слишком короткий ответ');
+      }
+
       return { text, source: proxy.name };
     } catch (error) {
-      errors.push(`${proxy.name}: ${error.message}`);
+      lastError = error;
     }
   }
 
-  throw new Error(`Все источники недоступны. ${errors.join(' | ')}`);
+  throw new Error(`Не удалось загрузить данные через все источники. Последняя ошибка: ${lastError?.message || 'неизвестно'}`);
 }
 
-function extractTitleIds(searchHtml) {
-  const matches = searchHtml.match(/\/title\/(tt\d{6,10})\//g) || [];
-  const ids = [...new Set(matches.map((entry) => entry.match(/tt\d{6,10}/)[0]))];
-  return ids.slice(0, MAX_POOL);
-}
+function extractMoviesFromSearchHtml(html) {
+  const doc = parser.parseFromString(html, 'text/html');
+  const links = Array.from(doc.querySelectorAll('a[href^="/title/tt"]'));
 
-function normalizeMovieNode(node) {
-  if (!node) return null;
+  const uniqueMovies = [];
+  const seen = new Set();
 
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const found = normalizeMovieNode(item);
-      if (found) return found;
-    }
-    return null;
+  for (const link of links) {
+    const href = link.getAttribute('href') || '';
+    const match = href.match(/\/title\/(tt\d+)\/?/);
+    if (!match) continue;
+
+    const id = match[1];
+    if (seen.has(id)) continue;
+
+    const title = link.textContent.trim();
+    if (!title) continue;
+
+    seen.add(id);
+    uniqueMovies.push({
+      id,
+      title,
+      url: `https://www.imdb.com/title/${id}/`
+    });
+
+    if (uniqueMovies.length >= MAX_RESULTS) break;
   }
 
-  if (typeof node !== 'object') return null;
-
-  if (Array.isArray(node['@graph'])) {
-    return normalizeMovieNode(node['@graph']);
-  }
-
-  const type = node['@type'];
-  const isMovie = type === 'Movie' || (Array.isArray(type) && type.includes('Movie'));
-  return isMovie ? node : null;
+  return uniqueMovies;
 }
 
-function parseJsonLdMovie(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const scripts = [...doc.querySelectorAll('script[type="application/ld+json"]')];
+function extractMovieDetails(html) {
+  const doc = parser.parseFromString(html, 'text/html');
 
-  for (const script of scripts) {
+  const jsonLdScripts = Array.from(doc.querySelectorAll('script[type="application/ld+json"]'));
+  let movieJson = null;
+
+  for (const script of jsonLdScripts) {
     const raw = script.textContent?.trim();
     if (!raw) continue;
 
     try {
-      const parsed = JSON.parse(raw);
-      const movie = normalizeMovieNode(parsed);
-      if (movie) return movie;
+      const data = JSON.parse(raw);
+      const candidates = Array.isArray(data) ? data : [data];
+
+      const found = candidates.find((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const type = item['@type'];
+        return type === 'Movie' || (Array.isArray(type) && type.includes('Movie'));
+      });
+
+      if (found) {
+        movieJson = found;
+        break;
+      }
     } catch {
-      // ignore broken json block
+      // ignore malformed json-ld blocks
     }
   }
 
-  return null;
+  const title = movieJson?.name || doc.querySelector('h1')?.textContent?.trim() || 'Без названия';
+  const rating = movieJson?.aggregateRating?.ratingValue || null;
+  const votes = movieJson?.aggregateRating?.ratingCount || null;
+  const image = movieJson?.image || '';
+  const description = movieJson?.description || '';
+
+  return { title, rating, votes, image, description };
 }
 
-function sanitizeText(text) {
-  if (!text) return 'Описание отсутствует.';
-  return text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function hasCyrillic(text) {
-  return /[А-Яа-яЁё]/.test(text);
-}
-
-async function toRussian(text) {
-  const clean = sanitizeText(text);
-  if (clean === 'Описание отсутствует.') return clean;
-  if (hasCyrillic(clean)) return clean;
-
-  for (const translate of translators) {
-    try {
-      const translated = sanitizeText(await translate(clean));
-      if (translated && hasCyrillic(translated)) return translated;
-    } catch {
-      // continue to next provider
-    }
-  }
-
-  return 'Описание на русском временно недоступно.';
-}
-
-function formatVotes(value) {
-  const numeric = Number(String(value || '').replace(/[^\d.]/g, ''));
-  if (!Number.isFinite(numeric) || numeric <= 0) return 'нет данных';
-  return new Intl.NumberFormat('ru-RU').format(Math.round(numeric));
-}
-
-function renderPoster(imageUrl, title) {
-  els.posterWrap.innerHTML = '';
-
-  if (!imageUrl) {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'poster-placeholder';
-    placeholder.textContent = 'Постер недоступен';
-    els.posterWrap.appendChild(placeholder);
-    return;
-  }
-
-  const img = document.createElement('img');
-  img.className = 'poster';
-  img.src = imageUrl;
-  img.alt = `Постер: ${title}`;
-  img.loading = 'lazy';
-  img.referrerPolicy = 'no-referrer';
-  img.onerror = () => renderPoster('', title);
-  els.posterWrap.appendChild(img);
-}
-
-function renderMovie({ movie, year, titleUrl, topPosition, descriptionRu }) {
-  els.movieTitle.textContent = movie.name || 'Без названия';
-  els.movieRating.textContent = String(movie.aggregateRating?.ratingValue || 'нет данных');
-  els.movieVotes.textContent = formatVotes(movie.aggregateRating?.ratingCount);
-  els.movieYear.textContent = String(year);
-  els.movieTop.textContent = `ТОП ${topPosition}`;
-  els.movieDescription.textContent = descriptionRu;
-  els.imdbTitleLink.href = titleUrl;
-
-  renderPoster(movie.image, movie.name || 'Фильм');
-  els.movieCard.hidden = false;
-}
-
-async function runRandomizer() {
-  const year = randomInt(YEAR_MIN, YEAR_MAX);
-  const searchUrl = buildSearchUrl(year);
-
-  els.randomBtn.disabled = true;
-  els.movieCard.hidden = true;
-  els.yearValue.textContent = String(year);
-  els.searchLink.href = searchUrl;
+async function translateToRussian(text) {
+  if (!text) return 'Описание недоступно.';
 
   try {
-    setStatus('Загружаем IMDb-поиск и подбираем случайный фильм…');
-    const { text: searchHtml, source: searchSource } = await fetchWithFallback(searchUrl);
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=${encodeURIComponent(text)}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const ids = extractTitleIds(searchHtml);
-    if (!ids.length) {
-      throw new Error('Не удалось получить фильмы из первой сотни выдачи IMDb.');
+    const data = await response.json();
+    const translated = Array.isArray(data?.[0])
+      ? data[0].map((part) => part?.[0] || '').join('')
+      : '';
+
+    if (translated.trim()) {
+      return translated.trim();
+    }
+  } catch {
+    // try fallback below
+  }
+
+  try {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ru`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    const translated = data?.responseData?.translatedText || '';
+    if (translated.trim()) {
+      return translated.trim();
+    }
+  } catch {
+    // no-op
+  }
+
+  return `${text} (не удалось автоматически перевести на русский)`;
+}
+
+function renderMovieCard(movie, details, year, rank) {
+  titleEl.textContent = details.title || movie.title;
+  ratingChipEl.textContent = `IMDb: ${details.rating || '—'}`;
+  votesChipEl.textContent = `Оценок: ${numberWithSpaces(details.votes)}`;
+  rankChipEl.textContent = `Позиция: ТОП ${rank}`;
+  descriptionEl.textContent = details.description;
+
+  posterEl.src = details.image || 'https://placehold.co/400x600/11172b/e8eeff?text=Нет+постера';
+  posterEl.alt = `Постер: ${details.title || movie.title}`;
+
+  movieLinkEl.href = movie.url;
+  selectedYearEl.textContent = String(year);
+  selectedRankEl.textContent = `ТОП ${rank}`;
+
+  cardEl.classList.remove('hidden');
+}
+
+async function handleRandom() {
+  randomBtn.disabled = true;
+  cardEl.classList.add('hidden');
+  selectedRankEl.textContent = '—';
+
+  try {
+    let attempt = 0;
+    let lastError = null;
+
+    while (attempt < MAX_SEARCH_RETRIES) {
+      attempt += 1;
+
+      try {
+        const year = randomInt(YEAR_MIN, YEAR_MAX);
+        selectedYearEl.textContent = String(year);
+
+        const searchUrl = `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
+
+        searchLink.href = searchUrl;
+        searchLink.style.display = 'inline-flex';
+
+        setStatus(`Попытка ${attempt}/${MAX_SEARCH_RETRIES}: запускаем поиск...`, 'warning');
+        const searchResponse = await fetchWithFallback(searchUrl, 'поиск IMDb');
+
+        setStatus(`Парсим выдачу IMDb за ${year} год (источник: ${searchResponse.source})...`, 'warning');
+        const movies = extractMoviesFromSearchHtml(searchResponse.text);
+
+        if (!movies.length) {
+          throw new Error('Не удалось найти фильмы в выдаче IMDb.');
+        }
+
+        const randomIndex = randomInt(0, movies.length - 1);
+        const selectedMovie = movies[randomIndex];
+        const rank = randomIndex + 1;
+
+        setStatus(`Выбран фильм с позицией ТОП ${rank}. Загружаем карточку фильма...`, 'warning');
+        const movieResponse = await fetchWithFallback(selectedMovie.url, `фильм ${selectedMovie.id}`);
+
+        const details = extractMovieDetails(movieResponse.text);
+        const ruDescription = await translateToRussian(details.description || 'Описание отсутствует.');
+        details.description = ruDescription;
+
+        renderMovieCard(selectedMovie, details, year, rank);
+        setStatus(`Готово! Найден фильм «${details.title}» (попытка ${attempt}).`, 'good');
+        return;
+      } catch (error) {
+        lastError = error;
+        setStatus(`Ошибка на попытке ${attempt}: ${error.message}. Перезапускаем поиск...`, 'warning');
+      }
     }
 
-    const randomIndex = randomInt(0, ids.length - 1);
-    const titleId = ids[randomIndex];
-    const topPosition = randomIndex + 1;
-    const titleUrl = `https://www.imdb.com/title/${titleId}/`;
-
-    setStatus(`Выбран фильм из ТОП-${ids.length}, позиция ${topPosition}. Загружаем карточку…`);
-    const { text: titleHtml, source: titleSource } = await fetchWithFallback(titleUrl);
-
-    const movie = parseJsonLdMovie(titleHtml);
-    if (!movie) {
-      throw new Error('Не удалось распарсить JSON-LD фильма.');
-    }
-
-    setStatus('Переводим описание на русский…');
-    const descriptionRu = await toRussian(movie.description);
-
-    renderMovie({ movie, year, titleUrl, topPosition, descriptionRu });
-    setStatus(`Готово! Источники: поиск — ${searchSource}, карточка — ${titleSource}.`, 'success');
-  } catch (error) {
-    setStatus(`Ошибка: ${error.message}`, 'error');
+    setStatus(`Ошибка: не удалось найти фильм после ${MAX_SEARCH_RETRIES} попыток. Последняя ошибка: ${lastError?.message || 'неизвестно'}`, 'error');
   } finally {
-    els.randomBtn.disabled = false;
+    randomBtn.disabled = false;
   }
 }
 
-els.randomBtn.addEventListener('click', runRandomizer);
-setStatus('Нажмите «Рандом», чтобы получить случайный фильм IMDb.');
+randomBtn.addEventListener('click', handleRandom);
+setStatus('Нажмите «Рандом», чтобы подобрать фильм.', 'good');
