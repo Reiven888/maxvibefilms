@@ -1,6 +1,7 @@
 const YEAR_MIN = 1975;
 const YEAR_MAX = 2025;
 const MAX_RESULTS = 50;
+const MAX_SEARCH_RETRIES = 20;
 
 const randomBtn = document.getElementById('randomBtn');
 const searchLink = document.getElementById('searchLink');
@@ -212,38 +213,52 @@ async function handleRandom() {
   selectedRankEl.textContent = '—';
 
   try {
-    const year = randomInt(YEAR_MIN, YEAR_MAX);
-    selectedYearEl.textContent = String(year);
+    let attempt = 0;
+    let lastError = null;
 
-    const searchUrl = `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
+    while (attempt < MAX_SEARCH_RETRIES) {
+      attempt += 1;
 
-    searchLink.href = searchUrl;
-    searchLink.style.display = 'inline-flex';
+      try {
+        const year = randomInt(YEAR_MIN, YEAR_MAX);
+        selectedYearEl.textContent = String(year);
 
-    const searchResponse = await fetchWithFallback(searchUrl, 'поиск IMDb');
+        const searchUrl = `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
 
-    setStatus(`Парсим выдачу IMDb за ${year} год (источник: ${searchResponse.source})...`, 'warning');
-    const movies = extractMoviesFromSearchHtml(searchResponse.text);
+        searchLink.href = searchUrl;
+        searchLink.style.display = 'inline-flex';
 
-    if (!movies.length) {
-      throw new Error('Не удалось найти фильмы в выдаче IMDb. Попробуйте ещё раз.');
+        setStatus(`Попытка ${attempt}/${MAX_SEARCH_RETRIES}: запускаем поиск...`, 'warning');
+        const searchResponse = await fetchWithFallback(searchUrl, 'поиск IMDb');
+
+        setStatus(`Парсим выдачу IMDb за ${year} год (источник: ${searchResponse.source})...`, 'warning');
+        const movies = extractMoviesFromSearchHtml(searchResponse.text);
+
+        if (!movies.length) {
+          throw new Error('Не удалось найти фильмы в выдаче IMDb.');
+        }
+
+        const randomIndex = randomInt(0, movies.length - 1);
+        const selectedMovie = movies[randomIndex];
+        const rank = randomIndex + 1;
+
+        setStatus(`Выбран фильм с позицией ТОП ${rank}. Загружаем карточку фильма...`, 'warning');
+        const movieResponse = await fetchWithFallback(selectedMovie.url, `фильм ${selectedMovie.id}`);
+
+        const details = extractMovieDetails(movieResponse.text);
+        const ruDescription = await translateToRussian(details.description || 'Описание отсутствует.');
+        details.description = ruDescription;
+
+        renderMovieCard(selectedMovie, details, year, rank);
+        setStatus(`Готово! Найден фильм «${details.title}» (попытка ${attempt}).`, 'good');
+        return;
+      } catch (error) {
+        lastError = error;
+        setStatus(`Ошибка на попытке ${attempt}: ${error.message}. Перезапускаем поиск...`, 'warning');
+      }
     }
 
-    const randomIndex = randomInt(0, movies.length - 1);
-    const selectedMovie = movies[randomIndex];
-    const rank = randomIndex + 1;
-
-    setStatus(`Выбран фильм с позицией ТОП ${rank}. Загружаем карточку фильма...`, 'warning');
-    const movieResponse = await fetchWithFallback(selectedMovie.url, `фильм ${selectedMovie.id}`);
-
-    const details = extractMovieDetails(movieResponse.text);
-    const ruDescription = await translateToRussian(details.description || 'Описание отсутствует.');
-    details.description = ruDescription;
-
-    renderMovieCard(selectedMovie, details, year, rank);
-    setStatus(`Готово! Найден фильм «${details.title}».`, 'good');
-  } catch (error) {
-    setStatus(`Ошибка: ${error.message}`, 'error');
+    setStatus(`Ошибка: не удалось найти фильм после ${MAX_SEARCH_RETRIES} попыток. Последняя ошибка: ${lastError?.message || 'неизвестно'}`, 'error');
   } finally {
     randomBtn.disabled = false;
   }
