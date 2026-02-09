@@ -31,6 +31,29 @@ const proxies = [
   },
 ];
 
+const translationProviders = [
+  async (text) => {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ru`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const translated = payload?.responseData?.translatedText?.trim();
+    if (!translated) throw new Error('Пустой перевод');
+    return translated;
+  },
+  async (text) => {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q=${encodeURIComponent(text)}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const translated = Array.isArray(payload?.[0])
+      ? payload[0].map((item) => item?.[0] || '').join('').trim()
+      : '';
+    if (!translated) throw new Error('Пустой перевод');
+    return translated;
+  },
+];
+
 function setStatus(text, type = '') {
   els.status.textContent = text;
   els.status.className = `status ${type}`.trim();
@@ -144,6 +167,29 @@ function sanitizeText(text) {
   return text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 }
 
+function hasCyrillic(text) {
+  return /[А-Яа-яЁё]/.test(text);
+}
+
+async function translateDescriptionToRussian(text) {
+  const baseText = sanitizeText(text);
+  if (!baseText || baseText === 'Описание отсутствует.') return baseText;
+  if (hasCyrillic(baseText)) return baseText;
+
+  for (const translate of translationProviders) {
+    try {
+      const translated = sanitizeText(await translate(baseText));
+      if (translated && hasCyrillic(translated)) {
+        return translated;
+      }
+    } catch {
+      // silently try next provider
+    }
+  }
+
+  return 'Описание на русском временно недоступно.';
+}
+
 function renderPoster(imageUrl, title) {
   els.posterWrap.innerHTML = '';
 
@@ -168,7 +214,7 @@ function renderPoster(imageUrl, title) {
   els.posterWrap.appendChild(img);
 }
 
-function renderMovie({ movie, year, titleUrl }) {
+function renderMovie({ movie, year, titleUrl, descriptionRu }) {
   const ratingValue = movie.aggregateRating?.ratingValue || 'нет данных';
   const ratingCount = movie.aggregateRating?.ratingCount;
 
@@ -176,7 +222,7 @@ function renderMovie({ movie, year, titleUrl }) {
   els.movieRating.textContent = String(ratingValue);
   els.movieVotes.textContent = formatVotes(ratingCount);
   els.movieYear.textContent = String(year);
-  els.movieDescription.textContent = sanitizeText(movie.description);
+  els.movieDescription.textContent = descriptionRu;
 
   renderPoster(movie.image, movie.name || 'Фильм');
 
@@ -215,7 +261,10 @@ async function handleRandomClick() {
       throw new Error('Не удалось распарсить JSON-LD карточки фильма IMDb.');
     }
 
-    renderMovie({ movie, year, titleUrl });
+    setStatus('Переводим описание на русский…');
+    const descriptionRu = await translateDescriptionToRussian(movie.description);
+
+    renderMovie({ movie, year, titleUrl, descriptionRu });
     setStatus(`Готово! Данные получены через: поиск — ${searchSource}, фильм — ${titleSource}.`, 'success');
   } catch (error) {
     setStatus(`Ошибка: ${error.message}`, 'error');
