@@ -1,5 +1,6 @@
 const YEAR_MIN = 1975;
 const YEAR_MAX = 2025;
+const MAX_POOL = 100;
 
 const els = {
   randomBtn: document.getElementById('randomBtn'),
@@ -12,6 +13,7 @@ const els = {
   movieRating: document.getElementById('movieRating'),
   movieVotes: document.getElementById('movieVotes'),
   movieYear: document.getElementById('movieYear'),
+  movieTop: document.getElementById('movieTop'),
   movieDescription: document.getElementById('movieDescription'),
   imdbTitleLink: document.getElementById('imdbTitleLink'),
 };
@@ -22,7 +24,7 @@ const proxies = [
     build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   },
   {
-    name: 'corsproxy',
+    name: 'corsproxy.io',
     build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   },
   {
@@ -31,26 +33,20 @@ const proxies = [
   },
 ];
 
-const translationProviders = [
+const translators = [
+  async (text) => {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=${encodeURIComponent(text)}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    return Array.isArray(payload?.[0]) ? payload[0].map((item) => item?.[0] || '').join('').trim() : '';
+  },
   async (text) => {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ru`;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
-    const translated = payload?.responseData?.translatedText?.trim();
-    if (!translated) throw new Error('Пустой перевод');
-    return translated;
-  },
-  async (text) => {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q=${encodeURIComponent(text)}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    const translated = Array.isArray(payload?.[0])
-      ? payload[0].map((item) => item?.[0] || '').join('').trim()
-      : '';
-    if (!translated) throw new Error('Пустой перевод');
-    return translated;
+    return payload?.responseData?.translatedText?.trim() || '';
   },
 ];
 
@@ -59,8 +55,8 @@ function setStatus(text, type = '') {
   els.status.className = `status ${type}`.trim();
 }
 
-function randomYear() {
-  return Math.floor(Math.random() * (YEAR_MAX - YEAR_MIN + 1)) + YEAR_MIN;
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function buildSearchUrl(year) {
@@ -71,56 +67,29 @@ async function fetchWithFallback(url) {
   const errors = [];
 
   for (const proxy of proxies) {
-    const proxiedUrl = proxy.build(url);
     try {
-      const response = await fetch(proxiedUrl, {
+      const response = await fetch(proxy.build(url), {
         headers: {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const text = await response.text();
-      if (!text || text.length < 50) {
-        throw new Error('Пустой или слишком короткий ответ');
-      }
-
+      if (!text || text.length < 80) throw new Error('Пустой ответ');
       return { text, source: proxy.name };
     } catch (error) {
       errors.push(`${proxy.name}: ${error.message}`);
     }
   }
 
-  throw new Error(`Не удалось загрузить страницу через доступные источники. ${errors.join(' | ')}`);
+  throw new Error(`Все источники недоступны. ${errors.join(' | ')}`);
 }
 
 function extractTitleIds(searchHtml) {
-  const ids = [...new Set(searchHtml.match(/\/title\/(tt\d{6,10})\//g)?.map((m) => m.match(/tt\d{6,10}/)[0]) || [])];
-  return ids;
-}
-
-function parseJsonLdMovie(movieHtml) {
-  const doc = new DOMParser().parseFromString(movieHtml, 'text/html');
-  const scripts = [...doc.querySelectorAll('script[type="application/ld+json"]')];
-
-  for (const script of scripts) {
-    const raw = script.textContent?.trim();
-    if (!raw) continue;
-
-    try {
-      const data = JSON.parse(raw);
-      const movie = normalizeMovieNode(data);
-      if (movie) return movie;
-    } catch {
-      const fallback = findMovieInBrokenJson(raw);
-      if (fallback) return fallback;
-    }
-  }
-
-  return null;
+  const matches = searchHtml.match(/\/title\/(tt\d{6,10})\//g) || [];
+  const ids = [...new Set(matches.map((entry) => entry.match(/tt\d{6,10}/)[0]))];
+  return ids.slice(0, MAX_POOL);
 }
 
 function normalizeMovieNode(node) {
@@ -142,24 +111,27 @@ function normalizeMovieNode(node) {
 
   const type = node['@type'];
   const isMovie = type === 'Movie' || (Array.isArray(type) && type.includes('Movie'));
-
   return isMovie ? node : null;
 }
 
-function findMovieInBrokenJson(raw) {
-  const match = raw.match(/\{[\s\S]*"@type"\s*:\s*"Movie"[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    return normalizeMovieNode(JSON.parse(match[0]));
-  } catch {
-    return null;
-  }
-}
+function parseJsonLdMovie(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const scripts = [...doc.querySelectorAll('script[type="application/ld+json"]')];
 
-function formatVotes(value) {
-  const num = Number(String(value).replace(/[^\d.]/g, ''));
-  if (!Number.isFinite(num) || num <= 0) return 'нет данных';
-  return new Intl.NumberFormat('ru-RU').format(Math.round(num));
+  for (const script of scripts) {
+    const raw = script.textContent?.trim();
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw);
+      const movie = normalizeMovieNode(parsed);
+      if (movie) return movie;
+    } catch {
+      // ignore broken json block
+    }
+  }
+
+  return null;
 }
 
 function sanitizeText(text) {
@@ -171,33 +143,37 @@ function hasCyrillic(text) {
   return /[А-Яа-яЁё]/.test(text);
 }
 
-async function translateDescriptionToRussian(text) {
-  const baseText = sanitizeText(text);
-  if (!baseText || baseText === 'Описание отсутствует.') return baseText;
-  if (hasCyrillic(baseText)) return baseText;
+async function toRussian(text) {
+  const clean = sanitizeText(text);
+  if (clean === 'Описание отсутствует.') return clean;
+  if (hasCyrillic(clean)) return clean;
 
-  for (const translate of translationProviders) {
+  for (const translate of translators) {
     try {
-      const translated = sanitizeText(await translate(baseText));
-      if (translated && hasCyrillic(translated)) {
-        return translated;
-      }
+      const translated = sanitizeText(await translate(clean));
+      if (translated && hasCyrillic(translated)) return translated;
     } catch {
-      // silently try next provider
+      // continue to next provider
     }
   }
 
   return 'Описание на русском временно недоступно.';
 }
 
+function formatVotes(value) {
+  const numeric = Number(String(value || '').replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(numeric) || numeric <= 0) return 'нет данных';
+  return new Intl.NumberFormat('ru-RU').format(Math.round(numeric));
+}
+
 function renderPoster(imageUrl, title) {
   els.posterWrap.innerHTML = '';
 
   if (!imageUrl) {
-    const fallback = document.createElement('div');
-    fallback.className = 'poster-placeholder';
-    fallback.textContent = 'Постер недоступен';
-    els.posterWrap.appendChild(fallback);
+    const placeholder = document.createElement('div');
+    placeholder.className = 'poster-placeholder';
+    placeholder.textContent = 'Постер недоступен';
+    els.posterWrap.appendChild(placeholder);
     return;
   }
 
@@ -207,65 +183,59 @@ function renderPoster(imageUrl, title) {
   img.alt = `Постер: ${title}`;
   img.loading = 'lazy';
   img.referrerPolicy = 'no-referrer';
-  img.onerror = () => {
-    renderPoster('', title);
-  };
-
+  img.onerror = () => renderPoster('', title);
   els.posterWrap.appendChild(img);
 }
 
-function renderMovie({ movie, year, titleUrl, descriptionRu }) {
-  const ratingValue = movie.aggregateRating?.ratingValue || 'нет данных';
-  const ratingCount = movie.aggregateRating?.ratingCount;
-
+function renderMovie({ movie, year, titleUrl, topPosition, descriptionRu }) {
   els.movieTitle.textContent = movie.name || 'Без названия';
-  els.movieRating.textContent = String(ratingValue);
-  els.movieVotes.textContent = formatVotes(ratingCount);
+  els.movieRating.textContent = String(movie.aggregateRating?.ratingValue || 'нет данных');
+  els.movieVotes.textContent = formatVotes(movie.aggregateRating?.ratingCount);
   els.movieYear.textContent = String(year);
+  els.movieTop.textContent = `ТОП ${topPosition}`;
   els.movieDescription.textContent = descriptionRu;
+  els.imdbTitleLink.href = titleUrl;
 
   renderPoster(movie.image, movie.name || 'Фильм');
-
-  els.imdbTitleLink.href = titleUrl;
   els.movieCard.hidden = false;
 }
 
-async function handleRandomClick() {
-  const year = randomYear();
+async function runRandomizer() {
+  const year = randomInt(YEAR_MIN, YEAR_MAX);
   const searchUrl = buildSearchUrl(year);
 
+  els.randomBtn.disabled = true;
+  els.movieCard.hidden = true;
   els.yearValue.textContent = String(year);
   els.searchLink.href = searchUrl;
 
-  els.randomBtn.disabled = true;
-  setStatus('Ищем фильмы за выбранный год…');
-  els.movieCard.hidden = true;
-
   try {
+    setStatus('Загружаем IMDb-поиск и подбираем случайный фильм…');
     const { text: searchHtml, source: searchSource } = await fetchWithFallback(searchUrl);
-    const ids = extractTitleIds(searchHtml);
 
+    const ids = extractTitleIds(searchHtml);
     if (!ids.length) {
-      throw new Error('Не удалось найти фильмы в поисковой выдаче IMDb.');
+      throw new Error('Не удалось получить фильмы из первой сотни выдачи IMDb.');
     }
 
-    const titleId = ids[0];
+    const randomIndex = randomInt(0, ids.length - 1);
+    const titleId = ids[randomIndex];
+    const topPosition = randomIndex + 1;
     const titleUrl = `https://www.imdb.com/title/${titleId}/`;
 
-    setStatus(`Найден фильм, загружаем карточку… (источник: ${searchSource})`);
-
+    setStatus(`Выбран фильм из ТОП-${ids.length}, позиция ${topPosition}. Загружаем карточку…`);
     const { text: titleHtml, source: titleSource } = await fetchWithFallback(titleUrl);
-    const movie = parseJsonLdMovie(titleHtml);
 
+    const movie = parseJsonLdMovie(titleHtml);
     if (!movie) {
-      throw new Error('Не удалось распарсить JSON-LD карточки фильма IMDb.');
+      throw new Error('Не удалось распарсить JSON-LD фильма.');
     }
 
     setStatus('Переводим описание на русский…');
-    const descriptionRu = await translateDescriptionToRussian(movie.description);
+    const descriptionRu = await toRussian(movie.description);
 
-    renderMovie({ movie, year, titleUrl, descriptionRu });
-    setStatus(`Готово! Данные получены через: поиск — ${searchSource}, фильм — ${titleSource}.`, 'success');
+    renderMovie({ movie, year, titleUrl, topPosition, descriptionRu });
+    setStatus(`Готово! Источники: поиск — ${searchSource}, карточка — ${titleSource}.`, 'success');
   } catch (error) {
     setStatus(`Ошибка: ${error.message}`, 'error');
   } finally {
@@ -273,5 +243,5 @@ async function handleRandomClick() {
   }
 }
 
-els.randomBtn.addEventListener('click', handleRandomClick);
+els.randomBtn.addEventListener('click', runRandomizer);
 setStatus('Нажмите «Рандом», чтобы получить случайный фильм IMDb.');
