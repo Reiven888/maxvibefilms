@@ -83,7 +83,8 @@
 
       .btn:focus-visible,
       .link-btn:focus-visible,
-      .imdb-link:focus-visible {
+      .imdb-link:focus-visible,
+      .watch-link:focus-visible {
         outline: none;
         box-shadow: var(--ring);
       }
@@ -185,15 +186,34 @@
         color: #e6edff;
       }
 
-      .imdb-link {
-        display: inline-flex;
+      .movie-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
         margin-top: 12px;
+      }
+
+      .imdb-link,
+      .watch-link {
+        display: inline-flex;
         text-decoration: none;
         font-weight: 800;
-        color: #191919;
-        background: #f5c518;
         border-radius: 10px;
         padding: 10px 14px;
+      }
+
+      .imdb-link {
+        color: #191919;
+        background: #f5c518;
+      }
+
+      .watch-link {
+        color: #f4f7ff;
+        background: linear-gradient(120deg, #2e8eff, #6b66ff);
+      }
+
+      .watch-link.hidden {
+        display: none;
       }
 
       @media (max-width: 760px) {
@@ -218,32 +238,36 @@
 
         <div class="controls">
           <button class="btn" id="randomBtn" type="button">Рандом</button>
-          <a id="searchLink" class="link-btn" target="_blank" rel="noopener noreferrer">Открыть IMDb-поиск</a>
+          <a class="link-btn" id="searchLink" href="#" target="_blank" rel="noopener noreferrer">Открыть IMDb-поиск</a>
         </div>
 
         <div class="meta">
-          <div>Выбранный год: <strong id="selectedYear">—</strong></div>
-          <div>Позиция в списке: <strong id="selectedRank">—</strong></div>
+          <span>Выбранный год: <strong id="selectedYear">—</strong></span>
+          <span>Позиция: <strong id="selectedRank">—</strong></span>
         </div>
 
-        <div id="status" class="status" aria-live="polite"></div>
-      </section>
+        <p class="status" id="status"></p>
 
-      <section id="movieCard" class="card hidden" aria-live="polite">
-        <img id="poster" class="poster" alt="Постер фильма" />
-        <div>
-          <h2 id="title" class="title"></h2>
-          <div class="chips">
-            <span id="ratingChip" class="chip">IMDb: —</span>
-            <span id="votesChip" class="chip">Оценок: —</span>
-            <span id="rankChip" class="chip">Позиция: —</span>
+        <article class="card hidden" id="movieCard">
+          <img class="poster" id="poster" src="" alt="Постер фильма" />
+
+          <div>
+            <h2 class="title" id="title">—</h2>
+            <div class="chips">
+              <span class="chip" id="ratingChip">IMDb: —</span>
+              <span class="chip" id="votesChip">Оценок: —</span>
+              <span class="chip" id="rankChip">Позиция: —</span>
+            </div>
+            <p class="desc" id="description">Описание появится после выбора фильма.</p>
+            <div class="movie-actions">
+              <a class="imdb-link" id="movieLink" href="#" target="_blank" rel="noopener noreferrer">Открыть IMDb</a>
+              <a class="watch-link hidden" id="watchLink" href="#" target="_blank" rel="noopener noreferrer">СМОТРЕТЬ</a>
+            </div>
           </div>
-          <p id="description" class="desc"></p>
-          <a id="movieLink" class="imdb-link" target="_blank" rel="noopener noreferrer">Открыть страницу фильма в IMDb</a>
-        </div>
+        </article>
       </section>
     </main>
 
-    <script src="main.js"></script>
+    <script src="./main.js"></script>
   </body>
 </html>
