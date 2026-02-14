@@ -26,7 +26,7 @@ const proxyBuilders = [
     build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
   },
   {
-    name: 'corsproxy',
+    name: 'corsproxy.io',
     build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`
   },
   {
@@ -45,20 +45,23 @@ function randomInt(min, max) {
 }
 
 function numberWithSpaces(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '—';
-  return new Intl.NumberFormat('ru-RU').format(number);
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return new Intl.NumberFormat('ru-RU').format(num);
 }
 
-async function fetchWithFallback(url, note) {
+function buildSearchUrl(year) {
+  return `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
+}
+
+async function fetchWithFallback(url, label) {
   let lastError = null;
 
-  for (let i = 0; i < proxyBuilders.length; i += 1) {
-    const proxy = proxyBuilders[i];
+  for (const proxy of proxyBuilders) {
     const proxiedUrl = proxy.build(url);
 
     try {
-      setStatus(`Загрузка (${note}) через ${proxy.name}...`, 'warning');
+      setStatus(`Загрузка (${label}) через ${proxy.name}...`, 'warning');
       const response = await fetch(proxiedUrl, {
         method: 'GET',
         headers: {
@@ -71,7 +74,7 @@ async function fetchWithFallback(url, note) {
       }
 
       const text = await response.text();
-      if (!text || text.length < 50) {
+      if (!text || text.trim().length < 80) {
         throw new Error('Пустой или слишком короткий ответ');
       }
 
@@ -81,44 +84,72 @@ async function fetchWithFallback(url, note) {
     }
   }
 
-  throw new Error(`Не удалось загрузить данные через все источники. Последняя ошибка: ${lastError?.message || 'неизвестно'}`);
+  throw new Error(`Все источники недоступны. Последняя ошибка: ${lastError?.message || 'неизвестно'}`);
 }
 
 function extractMoviesFromSearchHtml(html) {
   const doc = parser.parseFromString(html, 'text/html');
-  const links = Array.from(doc.querySelectorAll('a[href^="/title/tt"]'));
+  const rankedItems = Array.from(doc.querySelectorAll('li.ipc-metadata-list-summary-item'));
 
-  const uniqueMovies = [];
+  const movies = [];
   const seen = new Set();
 
-  for (const link of links) {
-    const href = link.getAttribute('href') || '';
-    const match = href.match(/\/title\/(tt\d+)\/?/);
-    if (!match) continue;
+  for (const item of rankedItems) {
+    const link = item.querySelector('a[href^="/title/tt"]');
+    if (!link) continue;
 
-    const id = match[1];
+    const href = link.getAttribute('href') || '';
+    const idMatch = href.match(/\/title\/(tt\d+)\/?/);
+    if (!idMatch) continue;
+
+    const id = idMatch[1];
     if (seen.has(id)) continue;
 
-    const title = link.textContent.trim();
+    const title = link.textContent?.trim();
     if (!title) continue;
 
     seen.add(id);
-    uniqueMovies.push({
+    movies.push({
       id,
       title,
       url: `https://www.imdb.com/title/${id}/`
     });
 
-    if (uniqueMovies.length >= MAX_RESULTS) break;
+    if (movies.length >= MAX_RESULTS) {
+      break;
+    }
   }
 
-  return uniqueMovies;
+  if (!movies.length) {
+    const links = Array.from(doc.querySelectorAll('a[href^="/title/tt"]'));
+
+    for (const link of links) {
+      const href = link.getAttribute('href') || '';
+      const idMatch = href.match(/\/title\/(tt\d+)\/?/);
+      if (!idMatch) continue;
+
+      const id = idMatch[1];
+      if (seen.has(id)) continue;
+
+      const title = link.textContent?.trim();
+      if (!title || /^(episodes?|photos?|cast|more)$/i.test(title)) continue;
+
+      seen.add(id);
+      movies.push({ id, title, url: `https://www.imdb.com/title/${id}/` });
+
+      if (movies.length >= MAX_RESULTS) {
+        break;
+      }
+    }
+  }
+
+  return movies.slice(0, MAX_RESULTS);
 }
 
 function extractMovieDetails(html) {
   const doc = parser.parseFromString(html, 'text/html');
-
   const jsonLdScripts = Array.from(doc.querySelectorAll('script[type="application/ld+json"]'));
+
   let movieJson = null;
 
   for (const script of jsonLdScripts) {
@@ -126,12 +157,15 @@ function extractMovieDetails(html) {
     if (!raw) continue;
 
     try {
-      const data = JSON.parse(raw);
-      const candidates = Array.isArray(data) ? data : [data];
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.['@graph'])
+          ? parsed['@graph']
+          : [parsed];
 
-      const found = candidates.find((item) => {
-        if (!item || typeof item !== 'object') return false;
-        const type = item['@type'];
+      const found = list.find((item) => {
+        const type = item?.['@type'];
         return type === 'Movie' || (Array.isArray(type) && type.includes('Movie'));
       });
 
@@ -140,13 +174,13 @@ function extractMovieDetails(html) {
         break;
       }
     } catch {
-      // ignore malformed json-ld blocks
+      // Пропускаем битые JSON-LD блоки.
     }
   }
 
-  const title = movieJson?.name || doc.querySelector('h1')?.textContent?.trim() || 'Без названия';
-  const rating = movieJson?.aggregateRating?.ratingValue || null;
-  const votes = movieJson?.aggregateRating?.ratingCount || null;
+  const title = movieJson?.name || doc.querySelector('h1')?.textContent?.trim() || '';
+  const rating = movieJson?.aggregateRating?.ratingValue || '';
+  const votes = movieJson?.aggregateRating?.ratingCount || '';
   const image = movieJson?.image || '';
   const description = movieJson?.description || '';
 
@@ -154,115 +188,128 @@ function extractMovieDetails(html) {
 }
 
 async function translateToRussian(text) {
-  if (!text) return 'Описание недоступно.';
+  if (!text || !text.trim()) {
+    throw new Error('Отсутствует описание для перевода');
+  }
+
+  const cleaned = text.trim();
 
   try {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=${encodeURIComponent(text)}`;
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=${encodeURIComponent(cleaned)}`;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const data = await response.json();
-    const translated = Array.isArray(data?.[0])
-      ? data[0].map((part) => part?.[0] || '').join('')
-      : '';
+    const translated = Array.isArray(data?.[0]) ? data[0].map((chunk) => chunk?.[0] || '').join('') : '';
 
-    if (translated.trim()) {
+    if (translated && translated.trim()) {
       return translated.trim();
     }
   } catch {
-    // try fallback below
+    // fallback ниже
   }
 
   try {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ru`;
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleaned)}&langpair=en|ru`;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const data = await response.json();
     const translated = data?.responseData?.translatedText || '';
-    if (translated.trim()) {
+
+    if (translated && translated.trim()) {
       return translated.trim();
     }
   } catch {
-    // no-op
+    // fallback ниже
   }
 
-  return `${text} (не удалось автоматически перевести на русский)`;
+  return `${cleaned} (автоперевод недоступен)`;
+}
+
+function validateMovie(details) {
+  if (!details.title || !details.title.trim()) {
+    throw new Error('У фильма отсутствует название');
+  }
+
+  if (!details.description || !details.description.trim()) {
+    throw new Error('У фильма отсутствует описание');
+  }
 }
 
 function renderMovieCard(movie, details, year, rank) {
-  titleEl.textContent = details.title || movie.title;
+  titleEl.textContent = details.title;
   ratingChipEl.textContent = `IMDb: ${details.rating || '—'}`;
   votesChipEl.textContent = `Оценок: ${numberWithSpaces(details.votes)}`;
   rankChipEl.textContent = `Позиция: ТОП ${rank}`;
   descriptionEl.textContent = details.description;
 
   posterEl.src = details.image || 'https://placehold.co/400x600/11172b/e8eeff?text=Нет+постера';
-  posterEl.alt = `Постер: ${details.title || movie.title}`;
+  posterEl.alt = `Постер: ${details.title}`;
 
   movieLinkEl.href = movie.url;
+
   selectedYearEl.textContent = String(year);
   selectedRankEl.textContent = `ТОП ${rank}`;
-
   cardEl.classList.remove('hidden');
 }
 
-async function handleRandom() {
-  randomBtn.disabled = true;
-  cardEl.classList.add('hidden');
+async function performSearchAttempt(attempt, totalAttempts) {
+  const year = randomInt(YEAR_MIN, YEAR_MAX);
+  const searchUrl = buildSearchUrl(year);
+
+  selectedYearEl.textContent = String(year);
   selectedRankEl.textContent = '—';
+  searchLink.href = searchUrl;
+  searchLink.style.display = 'inline-flex';
 
-  try {
-    let attempt = 0;
-    let lastError = null;
+  setStatus(`Попытка ${attempt}/${totalAttempts}: ищем фильмы за ${year} год...`, 'warning');
+  const searchResponse = await fetchWithFallback(searchUrl, 'поиск IMDb');
 
-    while (attempt < MAX_SEARCH_RETRIES) {
-      attempt += 1;
-
-      try {
-        const year = randomInt(YEAR_MIN, YEAR_MAX);
-        selectedYearEl.textContent = String(year);
-
-        const searchUrl = `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
-
-        searchLink.href = searchUrl;
-        searchLink.style.display = 'inline-flex';
-
-        setStatus(`Попытка ${attempt}/${MAX_SEARCH_RETRIES}: запускаем поиск...`, 'warning');
-        const searchResponse = await fetchWithFallback(searchUrl, 'поиск IMDb');
-
-        setStatus(`Парсим выдачу IMDb за ${year} год (источник: ${searchResponse.source})...`, 'warning');
-        const movies = extractMoviesFromSearchHtml(searchResponse.text);
-
-        if (!movies.length) {
-          throw new Error('Не удалось найти фильмы в выдаче IMDb.');
-        }
-
-        const randomIndex = randomInt(0, movies.length - 1);
-        const selectedMovie = movies[randomIndex];
-        const rank = randomIndex + 1;
-
-        setStatus(`Выбран фильм с позицией ТОП ${rank}. Загружаем карточку фильма...`, 'warning');
-        const movieResponse = await fetchWithFallback(selectedMovie.url, `фильм ${selectedMovie.id}`);
-
-        const details = extractMovieDetails(movieResponse.text);
-        const ruDescription = await translateToRussian(details.description || 'Описание отсутствует.');
-        details.description = ruDescription;
-
-        renderMovieCard(selectedMovie, details, year, rank);
-        setStatus(`Готово! Найден фильм «${details.title}» (попытка ${attempt}).`, 'good');
-        return;
-      } catch (error) {
-        lastError = error;
-        setStatus(`Ошибка на попытке ${attempt}: ${error.message}. Перезапускаем поиск...`, 'warning');
-      }
-    }
-
-    setStatus(`Ошибка: не удалось найти фильм после ${MAX_SEARCH_RETRIES} попыток. Последняя ошибка: ${lastError?.message || 'неизвестно'}`, 'error');
-  } finally {
-    randomBtn.disabled = false;
+  const movies = extractMoviesFromSearchHtml(searchResponse.text);
+  if (!movies.length) {
+    throw new Error('IMDb не вернул список фильмов в первых 50 позициях');
   }
+
+  const randomIndex = randomInt(0, movies.length - 1);
+  const movie = movies[randomIndex];
+  const rank = randomIndex + 1;
+
+  setStatus(`Найден кандидат: ТОП ${rank}. Загружаем страницу фильма...`, 'warning');
+  const movieResponse = await fetchWithFallback(movie.url, `фильм ${movie.id}`);
+  const details = extractMovieDetails(movieResponse.text);
+
+  details.description = await translateToRussian(details.description || '');
+  validateMovie(details);
+
+  return { movie, details, year, rank };
 }
 
-randomBtn.addEventListener('click', handleRandom);
+async function handleRandomClick() {
+  randomBtn.disabled = true;
+  cardEl.classList.add('hidden');
+
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_SEARCH_RETRIES; attempt += 1) {
+    try {
+      const result = await performSearchAttempt(attempt, MAX_SEARCH_RETRIES);
+      renderMovieCard(result.movie, result.details, result.year, result.rank);
+      setStatus(`Готово! Фильм найден с попытки ${attempt}. Приятного просмотра ✨`, 'good');
+      randomBtn.disabled = false;
+      return;
+    } catch (error) {
+      lastError = error;
+      setStatus(`Попытка ${attempt} не удалась: ${error.message}. Перезапускаем поиск...`, 'warning');
+    }
+  }
+
+  setStatus(
+    `Не удалось найти валидный фильм после ${MAX_SEARCH_RETRIES} попыток. Проверьте соединение и повторите. Детали: ${lastError?.message || 'неизвестная ошибка'}`,
+    'error'
+  );
+  randomBtn.disabled = false;
+}
+
+randomBtn.addEventListener('click', handleRandomClick);
 setStatus('Нажмите «Рандом», чтобы подобрать фильм.', 'good');
