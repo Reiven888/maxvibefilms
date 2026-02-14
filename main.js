@@ -8,6 +8,7 @@ const searchLink = document.getElementById('searchLink');
 const selectedYearEl = document.getElementById('selectedYear');
 const selectedRankEl = document.getElementById('selectedRank');
 const statusEl = document.getElementById('status');
+const logsListEl = document.getElementById('logsList');
 
 const cardEl = document.getElementById('movieCard');
 const titleEl = document.getElementById('title');
@@ -20,6 +21,8 @@ const movieLinkEl = document.getElementById('movieLink');
 const watchLinkEl = document.getElementById('watchLink');
 
 const parser = new DOMParser();
+const FETCH_TIMEOUT_MS = 7000;
+const LOG_LIMIT = 14;
 
 const proxyBuilders = [
   {
@@ -39,6 +42,34 @@ const proxyBuilders = [
 function setStatus(message, type = '') {
   statusEl.textContent = message;
   statusEl.className = `status ${type}`.trim();
+}
+
+function addLog(message, level = 'info') {
+  const now = new Date();
+  const stamp = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const text = `[${stamp}] ${message}`;
+
+  if (level === 'error') {
+    console.error(text);
+  } else if (level === 'warn') {
+    console.warn(text);
+  } else {
+    console.log(text);
+  }
+
+  const item = document.createElement('li');
+  item.textContent = text;
+  logsListEl.prepend(item);
+
+  while (logsListEl.children.length > LOG_LIMIT) {
+    logsListEl.removeChild(logsListEl.lastElementChild);
+  }
+}
+
+function withTimeout(ms) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, clear: () => clearTimeout(timeoutId) };
 }
 
 function randomInt(min, max) {
@@ -64,11 +95,14 @@ async function fetchWithFallback(url, label) {
 
   for (const proxy of proxyBuilders) {
     const proxiedUrl = proxy.build(url);
+    const timer = withTimeout(FETCH_TIMEOUT_MS);
 
     try {
       setStatus(`Загрузка (${label}) через ${proxy.name}...`, 'warning');
+      addLog(`Пробую источник ${proxy.name} для: ${label}.`, 'info');
       const response = await fetch(proxiedUrl, {
         method: 'GET',
+        signal: timer.signal,
         headers: {
           Accept: 'text/html,application/json;q=0.9,*/*;q=0.8'
         }
@@ -83,9 +117,15 @@ async function fetchWithFallback(url, label) {
         throw new Error('Пустой или слишком короткий ответ');
       }
 
+      addLog(`Успешно загружено: ${label} через ${proxy.name}.`, 'info');
+
       return { text, source: proxy.name };
     } catch (error) {
       lastError = error;
+      const reason = error?.name === 'AbortError' ? `таймаут ${FETCH_TIMEOUT_MS}мс` : error.message;
+      addLog(`Источник ${proxy.name} не сработал для ${label}: ${reason}.`, 'warn');
+    } finally {
+      timer.clear();
     }
   }
 
@@ -246,6 +286,7 @@ function extractKpId(html) {
 async function findKinopoiskData(movie, details, year) {
   const query = encodeURIComponent(`${details.originalTitle} ${year}`);
   const searchUrl = `https://www.kinopoisk.ru/index.php?kp_query=${query}`;
+  addLog(`Ищу фильм на Кинопоиске: ${details.originalTitle} (${year}).`, 'info');
 
   const response = await fetchWithFallback(searchUrl, 'поиск на Кинопоиске');
   const kpId = extractKpId(response.text);
@@ -254,6 +295,11 @@ async function findKinopoiskData(movie, details, year) {
     throw new Error('Не удалось найти карточку фильма на Кинопоиске');
   }
 
+  const kkUrl = `https://www.kkpoisk.ru/film/${kpId}/`;
+  const russianTitle = await translateToRussian(details.originalTitle || movie.title);
+  addLog(`Найдена ссылка для «СМОТРЕТЬ»: kkpoisk /film/${kpId}/.`, 'info');
+
+  return { kpId, kkUrl, russianTitle };
   const kpUrl = `https://www.kinopoisk.ru/film/${kpId}/`;
   const kkUrl = `https://www.kkpoisk.ru/film/${kpId}/`;
 
@@ -310,6 +356,7 @@ function renderMovieCard(movie, details, year, rank, kinopoiskData) {
 async function performSearchAttempt(attempt, totalAttempts) {
   const year = randomInt(YEAR_MIN, YEAR_MAX);
   const searchUrl = buildSearchUrl(year);
+  addLog(`Старт попытки ${attempt}/${totalAttempts}. Выбран год: ${year}.`, 'info');
 
   selectedYearEl.textContent = String(year);
   selectedRankEl.textContent = '—';
@@ -324,16 +371,20 @@ async function performSearchAttempt(attempt, totalAttempts) {
   if (!movies.length) {
     throw new Error('IMDb не вернул список фильмов в первых 50 позициях');
   }
+  addLog(`Получено фильмов в выборке: ${movies.length}.`, 'info');
 
   const randomIndex = randomInt(0, movies.length - 1);
   const movie = movies[randomIndex];
   const rank = randomIndex + 1;
+  addLog(`Случайно выбран фильм #${rank}: ${movie.title} (${movie.id}).`, 'info');
 
   setStatus(`Найден кандидат: ТОП ${rank}. Загружаем страницу фильма...`, 'warning');
   const movieResponse = await fetchWithFallback(movie.url, `фильм ${movie.id}`);
   const details = extractMovieDetails(movieResponse.text);
+  addLog('Страница фильма IMDb разобрана успешно.', 'info');
 
   details.description = await translateToRussian(details.description || '');
+  addLog('Описание переведено на русский.', 'info');
 
   setStatus(`Ищем этот фильм на Кинопоиске для кнопки «СМОТРЕТЬ»...`, 'warning');
   const kinopoiskData = await findKinopoiskData(movie, details, year);
@@ -346,6 +397,8 @@ async function performSearchAttempt(attempt, totalAttempts) {
 async function handleRandomClick() {
   randomBtn.disabled = true;
   cardEl.classList.add('hidden');
+  logsListEl.innerHTML = '';
+  addLog('Запущен новый поиск фильма.', 'info');
 
   let lastError = null;
 
@@ -354,11 +407,13 @@ async function handleRandomClick() {
       const result = await performSearchAttempt(attempt, MAX_SEARCH_RETRIES);
       renderMovieCard(result.movie, result.details, result.year, result.rank, result.kinopoiskData);
       setStatus(`Готово! Фильм найден с попытки ${attempt}. Приятного просмотра ✨`, 'good');
+      addLog(`Успех: фильм найден с попытки ${attempt}.`, 'info');
       randomBtn.disabled = false;
       return;
     } catch (error) {
       lastError = error;
       setStatus(`Попытка ${attempt} не удалась: ${error.message}. Перезапускаем поиск...`, 'warning');
+      addLog(`Ошибка на попытке ${attempt}: ${error.message}`, 'error');
     }
   }
 
@@ -366,6 +421,7 @@ async function handleRandomClick() {
     `Не удалось найти валидный фильм после ${MAX_SEARCH_RETRIES} попыток. Проверьте соединение и повторите. Детали: ${lastError?.message || 'неизвестная ошибка'}`,
     'error'
   );
+  addLog('Достигнут лимит попыток. Поиск завершён с ошибкой.', 'error');
   randomBtn.disabled = false;
 }
 
