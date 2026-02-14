@@ -1,7 +1,7 @@
 const YEAR_MIN = 1975;
 const YEAR_MAX = 2025;
 const TOP_LIMIT = 10;
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 14000;
 const LOG_LIMIT = 30;
 const MAX_ATTEMPTS = 8;
 
@@ -28,6 +28,7 @@ const kinopoiskCache = new Map();
 
 const proxyBuilders = [
   { name: 'allorigins', build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` },
+  { name: 'codetabs', build: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}` },
   { name: 'corsproxy.io', build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}` },
   { name: 'thingproxy', build: (url) => `https://thingproxy.freeboard.io/fetch/${url}` },
   { name: 'r.jina.ai', build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}` }
@@ -36,9 +37,12 @@ const proxyBuilders = [
 function getProxiesForLabel(label) {
   const normalized = (label || '').toLowerCase();
 
-  // r.jina.ai часто возвращает 451 на IMDb и не даёт выигрыша в этом сценарии.
+  // На IMDb сначала пробуем самые стабильные, r.jina.ai оставляем последним шансом.
   if (normalized.includes('imdb')) {
-    return proxyBuilders.filter((proxy) => proxy.name !== 'r.jina.ai');
+    const preferredOrder = ['allorigins', 'codetabs', 'thingproxy', 'corsproxy.io', 'r.jina.ai'];
+    return preferredOrder
+      .map((name) => proxyBuilders.find((proxy) => proxy.name === name))
+      .filter(Boolean);
   }
 
   return proxyBuilders;
@@ -64,7 +68,6 @@ function addLog(message, level = 'info') {
   const li = document.createElement('li');
   li.textContent = full;
   logsListEl.prepend(li);
-
   while (logsListEl.children.length > LOG_LIMIT) {
     logsListEl.removeChild(logsListEl.lastElementChild);
   }
@@ -86,7 +89,6 @@ function clean(text) {
 
 function numberRu(value) {
   const n = Number((value || '').toString().replace(/[\s,]+/g, ''));
-
   return Number.isFinite(n) ? new Intl.NumberFormat('ru-RU').format(n) : '—';
 }
 
@@ -147,10 +149,30 @@ async function fetchHtml(url, label) {
   throw new Error(`${label}: все источники недоступны (${errors.join(' | ')})`);
 }
 
+async function fetchImdbSearchHtml(searchUrl) {
+  const variants = [
+    `${searchUrl}&count=${TOP_LIMIT}&view=simple`,
+    `${searchUrl}&count=${TOP_LIMIT}`,
+    searchUrl
+  ];
+
+  const errors = [];
+  for (const variantUrl of variants) {
+    try {
+      return await fetchHtml(variantUrl, 'поиск IMDb');
+    } catch (error) {
+      errors.push(error.message);
+      addLog(`IMDb-вариант не сработал: ${error.message}`, 'warn');
+    }
+  }
+
+  throw new Error(`поиск IMDb: варианты запроса не сработали (${errors.join(' | ')})`);
+}
+
 function parseVotesFromText(text) {
   const m = clean(text).match(/\(([^)]+)\)/);
   if (!m?.[1]) return '—';
-  const raw = m[1].replace(/[\s,]+/g, '').toUpperCase();
+  const raw = m[1].replace(/,/g, '').toUpperCase();
   if (raw.endsWith('K')) return Math.round(Number(raw.slice(0, -1)) * 1000);
   if (raw.endsWith('M')) return Math.round(Number(raw.slice(0, -1)) * 1000000);
   const n = Number(raw);
@@ -264,7 +286,6 @@ function renderMovie(movie, ruTitle, ruDescription, watchUrl, year) {
 async function performAttempt(attempt) {
   const year = randomInt(YEAR_MIN, YEAR_MAX);
   const searchUrl = buildImdbSearchUrl(year);
-  const searchFetchUrl = `${searchUrl}&count=${TOP_LIMIT}`;
 
   selectedYearEl.textContent = String(year);
   selectedRankEl.textContent = '—';
@@ -273,7 +294,7 @@ async function performAttempt(attempt) {
   addLog(`Попытка ${attempt}/${MAX_ATTEMPTS}. Выбран год: ${year}`);
 
   setStatus('Получаю выдачу IMDb...', 'warn');
-  const searchHtml = await fetchHtml(searchFetchUrl, 'поиск IMDb');
+  const searchHtml = await fetchImdbSearchHtml(searchUrl);
   const movies = extractSearchMovies(searchHtml);
 
   if (!movies.length) throw new Error('IMDb не вернул подходящие фильмы в ТОП-10');
