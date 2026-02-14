@@ -5,301 +5,106 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MaxVibeFilms — IMDb randomizer</title>
     <style>
-      :root {
-        color-scheme: dark;
-        --bg-1: #090d1a;
-        --bg-2: #111b33;
-        --panel: #141f39cc;
-        --panel-solid: #162443;
-        --text: #ecf1ff;
-        --muted: #9fb0d7;
-        --accent-1: #7dafff;
-        --accent-2: #9a6dff;
-        --ok: #33d39a;
-        --warn: #ffd166;
-        --err: #ff7676;
-        --ring: 0 0 0 2px #ffffff1c;
-        --shadow: 0 18px 36px #00000055;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
-        min-height: 100vh;
-        font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
-        background: radial-gradient(circle at 20% 0%, var(--bg-2), var(--bg-1) 42%);
-        color: var(--text);
+        font-family: Inter, Segoe UI, Arial, sans-serif;
+        background: #0b1020;
+        color: #eef3ff;
       }
-
-      .app {
-        width: min(1060px, 92vw);
-        margin: 36px auto 54px;
+      .app { width: min(980px, 92vw); margin: 32px auto; }
+      .panel {
+        background: #151f3e;
+        border: 1px solid #ffffff22;
+        border-radius: 16px;
+        padding: 20px;
       }
-
-      .hero {
-        padding: 24px;
-        border: 1px solid #ffffff1a;
-        border-radius: 22px;
-        background: linear-gradient(125deg, #7dafff22, #9a6dff1f), var(--panel);
-        backdrop-filter: blur(10px);
-        box-shadow: var(--shadow);
-      }
-
-      h1 {
-        margin: 0 0 10px;
-        font-size: clamp(1.45rem, 2.1vw, 2.2rem);
-      }
-
-      .subtitle {
-        margin: 0 0 20px;
-        color: var(--muted);
-        line-height: 1.5;
-      }
-
-      .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-      }
-
-      .btn,
-      .link-btn {
+      h1 { margin: 0 0 10px; font-size: clamp(1.4rem, 2.4vw, 2rem); }
+      .sub { margin: 0 0 16px; color: #b3c3ec; line-height: 1.45; }
+      .row { display: flex; flex-wrap: wrap; gap: 10px; }
+      button, a.action {
         border: 0;
-        border-radius: 12px;
-        padding: 11px 16px;
-        font-size: 0.96rem;
-        font-weight: 700;
-        cursor: pointer;
-        transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s;
-      }
-
-      .btn:hover,
-      .link-btn:hover {
-        transform: translateY(-1px);
-      }
-
-      .btn:focus-visible,
-      .link-btn:focus-visible,
-      .imdb-link:focus-visible,
-      .watch-link:focus-visible {
-        outline: none;
-        box-shadow: var(--ring);
-      }
-
-      .btn:disabled {
-        opacity: 0.64;
-        cursor: not-allowed;
-      }
-
-      #randomBtn {
-        color: #fff;
-        background: linear-gradient(120deg, var(--accent-1), var(--accent-2));
-        box-shadow: 0 12px 24px #7dafff44;
-      }
-
-      .link-btn {
-        display: none;
         text-decoration: none;
-        color: #dce6ff;
-        background: #22345f;
-      }
-
-      .meta {
-        margin-top: 16px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px 18px;
-        color: var(--muted);
-      }
-
-      .status {
-        margin-top: 16px;
-        min-height: 24px;
-        font-weight: 600;
-      }
-
-      .status.good {
-        color: var(--ok);
-      }
-
-      .status.warning {
-        color: var(--warn);
-      }
-
-      .status.error {
-        color: var(--err);
-      }
-
-      .logs {
-        margin-top: 14px;
-        border: 1px solid #ffffff1a;
-        border-radius: 12px;
-        background: #0d152b;
-        padding: 10px 12px;
-      }
-
-      .logs-title {
-        margin: 0 0 8px;
-        color: #c7d5fb;
-        font-size: 0.92rem;
-        font-weight: 700;
-      }
-
-      .logs-list {
-        margin: 0;
-        padding-left: 18px;
-        max-height: 180px;
-        overflow: auto;
-      }
-
-      .logs-list li {
-        color: #aebce2;
-        font-size: 0.86rem;
-        line-height: 1.45;
-        margin: 0 0 4px;
-      }
-
-      .card {
-        margin-top: 20px;
-        display: grid;
-        grid-template-columns: minmax(190px, 250px) 1fr;
-        gap: 16px;
-        padding: 18px;
-        border-radius: 18px;
-        border: 1px solid #ffffff1a;
-        background: linear-gradient(150deg, #ffffff10, #ffffff08), var(--panel-solid);
-        box-shadow: var(--shadow);
-      }
-
-      .card.hidden {
-        display: none;
-      }
-
-      .poster {
-        width: 100%;
-        max-width: 250px;
-        border-radius: 12px;
-        border: 1px solid #ffffff1a;
-        background: #11172b;
-        aspect-ratio: 2/3;
-        object-fit: cover;
-      }
-
-      .title {
-        margin: 0 0 10px;
-        font-size: clamp(1.18rem, 2.2vw, 1.84rem);
-      }
-
-      .chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 12px;
-      }
-
-      .chip {
-        border-radius: 999px;
-        border: 1px solid #ffffff1c;
-        background: #202f57;
-        color: #dce5ff;
-        padding: 6px 12px;
-        font-size: 0.86rem;
-      }
-
-      .desc {
-        margin: 0;
-        line-height: 1.54;
-        color: #e6edff;
-      }
-
-      .movie-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 12px;
-      }
-
-      .imdb-link,
-      .watch-link {
-        display: inline-flex;
-        text-decoration: none;
-        font-weight: 800;
         border-radius: 10px;
-        padding: 10px 14px;
+        padding: 11px 14px;
+        font-weight: 700;
+        font-size: .95rem;
       }
-
-      .imdb-link {
-        color: #191919;
-        background: #f5c518;
+      #randomBtn { cursor: pointer; color:#fff; background: linear-gradient(120deg,#4a8bff,#7c5cff); }
+      #imdbSearchBtn { background:#233a6e; color:#d7e4ff; }
+      #imdbSearchBtn.disabled { opacity: .5; pointer-events:none; }
+      .meta { margin-top:14px; color:#b6c6ef; display:flex; gap:16px; flex-wrap:wrap; }
+      .status { margin-top:12px; font-weight:600; min-height:24px; }
+      .status.good{ color:#53e2ae; }
+      .status.warn{ color:#ffd369; }
+      .status.error{ color:#ff7a8b; }
+      .logs { margin-top:12px; background:#0f1730; border:1px solid #ffffff1f; border-radius:10px; padding:10px; }
+      .logs h2 { margin:0 0 8px; font-size:.95rem; }
+      .logs ol { margin:0; padding-left:18px; max-height:180px; overflow:auto; }
+      .logs li { color:#b3c2ea; font-size:.85rem; margin-bottom:4px; }
+      .card {
+        margin-top:16px;
+        background:#1a2850;
+        border:1px solid #ffffff22;
+        border-radius:16px;
+        padding:14px;
+        display:grid;
+        grid-template-columns:minmax(180px,230px) 1fr;
+        gap:14px;
       }
-
-      .watch-link {
-        color: #f4f7ff;
-        background: linear-gradient(120deg, #2e8eff, #6b66ff);
-      }
-
-      .watch-link.hidden {
-        display: none;
-      }
-
-      @media (max-width: 760px) {
-        .card {
-          grid-template-columns: 1fr;
-        }
-
-        .poster {
-          max-width: 220px;
-        }
-      }
+      .card.hidden { display:none; }
+      .poster { width:100%; aspect-ratio: 2/3; object-fit:cover; border-radius:10px; background:#0d1530; }
+      .title { margin:0 0 8px; font-size: clamp(1.15rem, 2vw, 1.7rem); }
+      .chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+      .chip { background:#243b74; border:1px solid #ffffff22; border-radius:999px; padding:6px 10px; font-size:.85rem; }
+      .desc { margin: 0; line-height:1.5; }
+      .links { margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; }
+      .imdb { background:#f5c518; color:#111; }
+      .watch { background:linear-gradient(120deg,#2f92ff,#605eff); color:#fff; }
+      @media (max-width: 760px){ .card { grid-template-columns:1fr; } }
     </style>
   </head>
   <body>
     <main class="app">
-      <section class="hero">
+      <section class="panel">
         <h1>🎬 MaxVibeFilms — IMDb randomizer</h1>
-        <p class="subtitle">
-          Нажмите «Рандом», и приложение подберёт случайный год (1975–2025), откроет IMDb-поиск за этот год и выберет случайный
-          фильм из первых 50 позиций.
-        </p>
+        <p class="sub">Нажмите «Рандом»: выбирается случайный год 1975–2025, выполняется поиск IMDb, берётся случайный фильм из первых 10 результатов и показывается карточка.</p>
 
-        <div class="controls">
-          <button class="btn" id="randomBtn" type="button">Рандом</button>
-          <a class="link-btn" id="searchLink" href="#" target="_blank" rel="noopener noreferrer">Открыть IMDb-поиск</a>
+        <div class="row">
+          <button id="randomBtn" type="button">Рандом</button>
+          <a id="imdbSearchBtn" class="action disabled" href="#" target="_blank" rel="noopener noreferrer">Открыть IMDb-поиск</a>
         </div>
 
         <div class="meta">
-          <span>Выбранный год: <strong id="selectedYear">—</strong></span>
-          <span>Позиция: <strong id="selectedRank">—</strong></span>
+          <div>Выбранный год: <strong id="selectedYear">—</strong></div>
+          <div>Позиция в выдаче: <strong id="selectedRank">—</strong></div>
         </div>
 
-        <p class="status" id="status"></p>
+        <p id="status" class="status good">Нажмите «Рандом», чтобы начать.</p>
 
-        <section class="logs" aria-live="polite">
-          <p class="logs-title">Журнал работы</p>
-          <ol class="logs-list" id="logsList"></ol>
-        </section>
-
-        <article class="card hidden" id="movieCard">
-          <img class="poster" id="poster" src="" alt="Постер фильма" />
-
-          <div>
-            <h2 class="title" id="title">—</h2>
-            <div class="chips">
-              <span class="chip" id="ratingChip">IMDb: —</span>
-              <span class="chip" id="votesChip">Оценок: —</span>
-              <span class="chip" id="rankChip">Позиция: —</span>
-            </div>
-            <p class="desc" id="description">Описание появится после выбора фильма.</p>
-            <div class="movie-actions">
-              <a class="imdb-link" id="movieLink" href="#" target="_blank" rel="noopener noreferrer">Открыть IMDb</a>
-              <a class="watch-link hidden" id="watchLink" href="#" target="_blank" rel="noopener noreferrer">СМОТРЕТЬ</a>
-            </div>
-          </div>
-        </article>
+        <div class="logs">
+          <h2>Логи</h2>
+          <ol id="logsList"></ol>
+        </div>
       </section>
+
+      <article id="movieCard" class="card hidden">
+        <img id="poster" class="poster" alt="Постер фильма" />
+        <div>
+          <h2 id="title" class="title"></h2>
+          <div class="chips">
+            <span id="ratingChip" class="chip">IMDb: —</span>
+            <span id="votesChip" class="chip">Оценок: —</span>
+            <span id="rankChip" class="chip">Позиция: —</span>
+          </div>
+          <p id="description" class="desc"></p>
+          <div class="links">
+            <a id="movieLink" class="action imdb" href="#" target="_blank" rel="noopener noreferrer">IMDb</a>
+            <a id="watchLink" class="action watch" href="#" target="_blank" rel="noopener noreferrer">СМОТРЕТЬ</a>
+          </div>
+        </div>
+      </article>
     </main>
 
     <script src="./main.js"></script>
