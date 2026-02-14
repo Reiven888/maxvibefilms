@@ -53,13 +53,18 @@ function addLog(message, level = 'info') {
   const stamp = new Date().toLocaleTimeString('ru-RU');
   const full = `[${stamp}] ${message}`;
 
-  if (level === 'error') console.error(full);
-  else if (level === 'warn') console.warn(full);
-  else console.log(full);
+  if (level === 'error') {
+    console.error(full);
+  } else if (level === 'warn') {
+    console.warn(full);
+  } else {
+    console.log(full);
+  }
 
   const li = document.createElement('li');
   li.textContent = full;
   logsListEl.prepend(li);
+
   while (logsListEl.children.length > LOG_LIMIT) {
     logsListEl.removeChild(logsListEl.lastElementChild);
   }
@@ -71,8 +76,8 @@ function randomInt(min, max) {
 
 function withTimeout(ms) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), ms);
-  return { signal: controller.signal, clear: () => clearTimeout(timeoutId) };
+  const id = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, clear: () => clearTimeout(id) };
 }
 
 function clean(text) {
@@ -80,7 +85,8 @@ function clean(text) {
 }
 
 function numberRu(value) {
-  const n = Number((value || '').toString().replace(/[\s,]/g, ''));
+  const n = Number((value || '').toString().replace(/[\s,]+/g, ''));
+
   return Number.isFinite(n) ? new Intl.NumberFormat('ru-RU').format(n) : '—';
 }
 
@@ -144,7 +150,7 @@ async function fetchHtml(url, label) {
 function parseVotesFromText(text) {
   const m = clean(text).match(/\(([^)]+)\)/);
   if (!m?.[1]) return '—';
-  const raw = m[1].replace(/,/g, '').toUpperCase();
+  const raw = m[1].replace(/[\s,]+/g, '').toUpperCase();
   if (raw.endsWith('K')) return Math.round(Number(raw.slice(0, -1)) * 1000);
   if (raw.endsWith('M')) return Math.round(Number(raw.slice(0, -1)) * 1000000);
   const n = Number(raw);
