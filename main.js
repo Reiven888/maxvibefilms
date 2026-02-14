@@ -2,6 +2,8 @@ const YEAR_MIN = 1975;
 const YEAR_MAX = 2025;
 const MAX_RESULTS = 50;
 const MAX_SEARCH_RETRIES = 20;
+const FETCH_TIMEOUT_MS = 7000;
+const LOG_LIMIT = 14;
 
 const randomBtn = document.getElementById('randomBtn');
 const searchLink = document.getElementById('searchLink');
@@ -21,8 +23,7 @@ const movieLinkEl = document.getElementById('movieLink');
 const watchLinkEl = document.getElementById('watchLink');
 
 const parser = new DOMParser();
-const FETCH_TIMEOUT_MS = 7000;
-const LOG_LIMIT = 14;
+const translateCache = new Map();
 
 const proxyBuilders = [
   {
@@ -90,46 +91,59 @@ function cleanText(value) {
   return (value || '').replace(/\s+/g, ' ').trim();
 }
 
-async function fetchWithFallback(url, label) {
-  let lastError = null;
+async function fetchViaProxy(url, label, proxy) {
+  const proxiedUrl = proxy.build(url);
+  const timer = withTimeout(FETCH_TIMEOUT_MS);
 
-  for (const proxy of proxyBuilders) {
-    const proxiedUrl = proxy.build(url);
-    const timer = withTimeout(FETCH_TIMEOUT_MS);
-
-    try {
-      setStatus(`Загрузка (${label}) через ${proxy.name}...`, 'warning');
-      addLog(`Пробую источник ${proxy.name} для: ${label}.`, 'info');
-      const response = await fetch(proxiedUrl, {
-        method: 'GET',
-        signal: timer.signal,
-        headers: {
-          Accept: 'text/html,application/json;q=0.9,*/*;q=0.8'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+  try {
+    addLog(`Пробую источник ${proxy.name} для: ${label}.`, 'info');
+    const response = await fetch(proxiedUrl, {
+      method: 'GET',
+      signal: timer.signal,
+      headers: {
+        Accept: 'text/html,application/json;q=0.9,*/*;q=0.8'
       }
+    });
 
-      const text = await response.text();
-      if (!text || text.trim().length < 80) {
-        throw new Error('Пустой или слишком короткий ответ');
-      }
-
-      addLog(`Успешно загружено: ${label} через ${proxy.name}.`, 'info');
-
-      return { text, source: proxy.name };
-    } catch (error) {
-      lastError = error;
-      const reason = error?.name === 'AbortError' ? `таймаут ${FETCH_TIMEOUT_MS}мс` : error.message;
-      addLog(`Источник ${proxy.name} не сработал для ${label}: ${reason}.`, 'warn');
-    } finally {
-      timer.clear();
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
-  }
 
-  throw new Error(`Все источники недоступны. Последняя ошибка: ${lastError?.message || 'неизвестно'}`);
+    const text = await response.text();
+    if (!text || text.trim().length < 80) {
+      throw new Error('Пустой или слишком короткий ответ');
+    }
+
+    addLog(`Успешно загружено: ${label} через ${proxy.name}.`, 'info');
+    return { text, source: proxy.name };
+  } catch (error) {
+    const reason = error?.name === 'AbortError' ? `таймаут ${FETCH_TIMEOUT_MS}мс` : error.message;
+    throw new Error(`${proxy.name}: ${reason}`);
+  } finally {
+    timer.clear();
+  }
+}
+
+async function fetchWithFallback(url, label) {
+  setStatus(`Загрузка (${label})...`, 'warning');
+
+  const attempts = proxyBuilders.map((proxy) => fetchViaProxy(url, label, proxy));
+  const errors = [];
+
+  try {
+    const result = await Promise.any(attempts);
+    addLog(`Использован самый быстрый источник: ${result.source}.`, 'info');
+    return result;
+  } catch (aggregate) {
+    const allErrors = Array.isArray(aggregate?.errors) ? aggregate.errors : [aggregate];
+    allErrors.forEach((err) => {
+      const message = err?.message || 'неизвестная ошибка';
+      errors.push(message);
+      addLog(`Источник не сработал для ${label}: ${message}.`, 'warn');
+    });
+
+    throw new Error(`Все источники недоступны. Ошибки: ${errors.join(' | ')}`);
+  }
 }
 
 function extractMoviesFromSearchHtml(html) {
@@ -154,11 +168,7 @@ function extractMoviesFromSearchHtml(html) {
     if (!title) continue;
 
     seen.add(id);
-    movies.push({
-      id,
-      title,
-      url: `https://www.imdb.com/title/${id}/`
-    });
+    movies.push({ id, title, url: `https://www.imdb.com/title/${id}/` });
 
     if (movies.length >= MAX_RESULTS) {
       break;
@@ -203,11 +213,7 @@ function extractMovieDetails(html) {
 
     try {
       const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed?.['@graph'])
-          ? parsed['@graph']
-          : [parsed];
+      const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.['@graph']) ? parsed['@graph'] : [parsed];
 
       const found = list.find((item) => {
         const type = item?.['@type'];
@@ -219,7 +225,7 @@ function extractMovieDetails(html) {
         break;
       }
     } catch {
-      // Пропускаем битые JSON-LD блоки.
+      addLog('Пропущен некорректный JSON-LD блок на странице IMDb.', 'warn');
     }
   }
 
@@ -233,11 +239,15 @@ function extractMovieDetails(html) {
 }
 
 async function translateToRussian(text) {
-  if (!text || !text.trim()) {
+  const cleaned = cleanText(text);
+  if (!cleaned) {
     throw new Error('Отсутствует текст для перевода');
   }
 
-  const cleaned = text.trim();
+  if (translateCache.has(cleaned)) {
+    addLog('Перевод взят из кеша.', 'info');
+    return translateCache.get(cleaned);
+  }
 
   try {
     const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q=${encodeURIComponent(cleaned)}`;
@@ -248,10 +258,12 @@ async function translateToRussian(text) {
     const translated = Array.isArray(data?.[0]) ? data[0].map((chunk) => chunk?.[0] || '').join('') : '';
 
     if (translated && translated.trim()) {
-      return translated.trim();
+      const value = translated.trim();
+      translateCache.set(cleaned, value);
+      return value;
     }
-  } catch {
-    // fallback ниже
+  } catch (error) {
+    addLog(`Google Translate недоступен: ${error.message}. Пробую резервный переводчик.`, 'warn');
   }
 
   try {
@@ -263,13 +275,17 @@ async function translateToRussian(text) {
     const translated = data?.responseData?.translatedText || '';
 
     if (translated && translated.trim()) {
-      return translated.trim();
+      const value = translated.trim();
+      translateCache.set(cleaned, value);
+      return value;
     }
-  } catch {
-    // fallback ниже
+  } catch (error) {
+    addLog(`Резервный переводчик недоступен: ${error.message}.`, 'warn');
   }
 
-  return `${cleaned} (автоперевод недоступен)`;
+  const fallback = `${cleaned} (автоперевод недоступен)`;
+  translateCache.set(cleaned, fallback);
+  return fallback;
 }
 
 function extractKpId(html) {
@@ -283,10 +299,16 @@ function extractKpId(html) {
   return '';
 }
 
+function extractRussianTitleFromKpPage(html) {
+  const doc = parser.parseFromString(html, 'text/html');
+  const raw = cleanText(doc.querySelector('h1')?.textContent || doc.querySelector('title')?.textContent || '');
+  return raw.replace(/\s*\(Кинопоиск\).*$/i, '').trim();
+}
+
 async function findKinopoiskData(movie, details, year) {
-  const query = encodeURIComponent(`${details.originalTitle} ${year}`);
+  const query = encodeURIComponent(`${details.originalTitle || movie.title} ${year}`);
   const searchUrl = `https://www.kinopoisk.ru/index.php?kp_query=${query}`;
-  addLog(`Ищу фильм на Кинопоиске: ${details.originalTitle} (${year}).`, 'info');
+  addLog(`Ищу фильм на Кинопоиске: ${details.originalTitle || movie.title} (${year}).`, 'info');
 
   const response = await fetchWithFallback(searchUrl, 'поиск на Кинопоиске');
   const kpId = extractKpId(response.text);
@@ -295,28 +317,22 @@ async function findKinopoiskData(movie, details, year) {
     throw new Error('Не удалось найти карточку фильма на Кинопоиске');
   }
 
-  const kkUrl = `https://www.kkpoisk.ru/film/${kpId}/`;
-  const russianTitle = await translateToRussian(details.originalTitle || movie.title);
-  addLog(`Найдена ссылка для «СМОТРЕТЬ»: kkpoisk /film/${kpId}/.`, 'info');
-
-  return { kpId, kkUrl, russianTitle };
   const kpUrl = `https://www.kinopoisk.ru/film/${kpId}/`;
   const kkUrl = `https://www.kkpoisk.ru/film/${kpId}/`;
 
   let russianTitle = '';
   try {
     const kpPage = await fetchWithFallback(kpUrl, `страница Кинопоиска ${kpId}`);
-    const doc = parser.parseFromString(kpPage.text, 'text/html');
-    russianTitle = cleanText(doc.querySelector('h1')?.textContent || doc.querySelector('title')?.textContent || '');
-    russianTitle = russianTitle.replace(/\s*\(Кинопоиск\).*$/i, '').trim();
-  } catch {
-    russianTitle = '';
+    russianTitle = extractRussianTitleFromKpPage(kpPage.text);
+  } catch (error) {
+    addLog(`Не удалось получить русское название с Кинопоиска: ${error.message}.`, 'warn');
   }
 
   if (!russianTitle) {
     russianTitle = await translateToRussian(details.originalTitle || movie.title);
   }
 
+  addLog(`Найдена ссылка для «СМОТРЕТЬ»: kkpoisk /film/${kpId}/.`, 'info');
   return { kpId, kpUrl, kkUrl, russianTitle };
 }
 
@@ -386,11 +402,10 @@ async function performSearchAttempt(attempt, totalAttempts) {
   details.description = await translateToRussian(details.description || '');
   addLog('Описание переведено на русский.', 'info');
 
-  setStatus(`Ищем этот фильм на Кинопоиске для кнопки «СМОТРЕТЬ»...`, 'warning');
+  setStatus('Ищем фильм на Кинопоиске для кнопки «СМОТРЕТЬ»...', 'warning');
   const kinopoiskData = await findKinopoiskData(movie, details, year);
 
   validateMovie(details, kinopoiskData);
-
   return { movie, details, year, rank, kinopoiskData };
 }
 
