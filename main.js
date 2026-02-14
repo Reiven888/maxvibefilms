@@ -300,6 +300,24 @@ async function findKinopoiskData(movie, details, year) {
   addLog(`Найдена ссылка для «СМОТРЕТЬ»: kkpoisk /film/${kpId}/.`, 'info');
 
   return { kpId, kkUrl, russianTitle };
+  const kpUrl = `https://www.kinopoisk.ru/film/${kpId}/`;
+  const kkUrl = `https://www.kkpoisk.ru/film/${kpId}/`;
+
+  let russianTitle = '';
+  try {
+    const kpPage = await fetchWithFallback(kpUrl, `страница Кинопоиска ${kpId}`);
+    const doc = parser.parseFromString(kpPage.text, 'text/html');
+    russianTitle = cleanText(doc.querySelector('h1')?.textContent || doc.querySelector('title')?.textContent || '');
+    russianTitle = russianTitle.replace(/\s*\(Кинопоиск\).*$/i, '').trim();
+  } catch {
+    russianTitle = '';
+  }
+
+  if (!russianTitle) {
+    russianTitle = await translateToRussian(details.originalTitle || movie.title);
+  }
+
+  return { kpId, kpUrl, kkUrl, russianTitle };
 }
 
 function validateMovie(details, kinopoiskData) {
