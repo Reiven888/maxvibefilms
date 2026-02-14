@@ -3,20 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MaxVibeFilms — IMDb Рандомайзер</title>
+    <title>MaxVibeFilms — IMDb randomizer</title>
     <style>
       :root {
-        --bg: #0b1020;
-        --panel: #131a30;
-        --panel-2: #1b2442;
-        --text: #e8eeff;
-        --muted: #9fb0d8;
-        --accent: #6ea8fe;
-        --accent-2: #8d5dff;
-        --good: #32d296;
-        --warning: #fbc02d;
-        --danger: #ff6b6b;
-        --shadow: 0 18px 38px rgba(0, 0, 0, 0.38);
+        color-scheme: dark;
+        --bg-1: #090d1a;
+        --bg-2: #111b33;
+        --panel: #141f39cc;
+        --panel-solid: #162443;
+        --text: #ecf1ff;
+        --muted: #9fb0d7;
+        --accent-1: #7dafff;
+        --accent-2: #9a6dff;
+        --ok: #33d39a;
+        --warn: #ffd166;
+        --err: #ff7676;
+        --ring: 0 0 0 2px #ffffff1c;
+        --shadow: 0 18px 36px #00000055;
       }
 
       * {
@@ -27,33 +30,33 @@
         margin: 0;
         min-height: 100vh;
         font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+        background: radial-gradient(circle at 20% 0%, var(--bg-2), var(--bg-1) 42%);
         color: var(--text);
-        background: radial-gradient(circle at 25% 10%, #202b56 0%, #0b1020 38%, #090d1a 100%);
       }
 
-      .container {
-        width: min(1050px, 92vw);
-        margin: 36px auto 50px;
+      .app {
+        width: min(1060px, 92vw);
+        margin: 36px auto 54px;
       }
 
       .hero {
-        background: linear-gradient(130deg, rgba(110, 168, 254, 0.2), rgba(141, 93, 255, 0.2));
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 22px;
         padding: 24px;
+        border: 1px solid #ffffff1a;
+        border-radius: 22px;
+        background: linear-gradient(125deg, #7dafff22, #9a6dff1f), var(--panel);
+        backdrop-filter: blur(10px);
         box-shadow: var(--shadow);
-        backdrop-filter: blur(8px);
       }
 
       h1 {
-        margin: 0 0 8px;
-        font-size: clamp(1.45rem, 2vw, 2.1rem);
+        margin: 0 0 10px;
+        font-size: clamp(1.45rem, 2.1vw, 2.2rem);
       }
 
       .subtitle {
-        margin: 0 0 22px;
+        margin: 0 0 20px;
         color: var(--muted);
-        line-height: 1.45;
+        line-height: 1.5;
       }
 
       .controls {
@@ -62,75 +65,82 @@
         gap: 12px;
       }
 
-      button,
+      .btn,
       .link-btn {
         border: 0;
         border-radius: 12px;
         padding: 11px 16px;
-        font-size: 0.97rem;
-        font-weight: 600;
+        font-size: 0.96rem;
+        font-weight: 700;
         cursor: pointer;
-        transition: transform 0.14s ease, box-shadow 0.2s ease, opacity 0.2s;
+        transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s;
       }
 
-      button:hover,
+      .btn:hover,
       .link-btn:hover {
         transform: translateY(-1px);
       }
 
-      button:disabled {
-        opacity: 0.58;
+      .btn:focus-visible,
+      .link-btn:focus-visible,
+      .imdb-link:focus-visible {
+        outline: none;
+        box-shadow: var(--ring);
+      }
+
+      .btn:disabled {
+        opacity: 0.64;
         cursor: not-allowed;
       }
 
       #randomBtn {
-        background: linear-gradient(120deg, var(--accent), var(--accent-2));
         color: #fff;
-        box-shadow: 0 10px 24px rgba(110, 168, 254, 0.25);
+        background: linear-gradient(120deg, var(--accent-1), var(--accent-2));
+        box-shadow: 0 12px 24px #7dafff44;
       }
 
       .link-btn {
         display: none;
         text-decoration: none;
-        color: #fff;
-        background: #22335f;
+        color: #dce6ff;
+        background: #22345f;
       }
 
       .meta {
-        margin-top: 15px;
+        margin-top: 16px;
         display: flex;
         flex-wrap: wrap;
-        gap: 16px;
+        gap: 10px 18px;
         color: var(--muted);
       }
 
       .status {
         margin-top: 16px;
         min-height: 24px;
-        font-weight: 500;
+        font-weight: 600;
       }
 
       .status.good {
-        color: var(--good);
+        color: var(--ok);
       }
 
       .status.warning {
-        color: var(--warning);
+        color: var(--warn);
       }
 
       .status.error {
-        color: var(--danger);
+        color: var(--err);
       }
 
       .card {
         margin-top: 20px;
-        background: linear-gradient(150deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 18px;
-        padding: 18px;
         display: grid;
-        gap: 16px;
         grid-template-columns: minmax(190px, 250px) 1fr;
+        gap: 16px;
+        padding: 18px;
+        border-radius: 18px;
+        border: 1px solid #ffffff1a;
+        background: linear-gradient(150deg, #ffffff10, #ffffff08), var(--panel-solid);
         box-shadow: var(--shadow);
       }
 
@@ -142,15 +152,15 @@
         width: 100%;
         max-width: 250px;
         border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        aspect-ratio: 2 / 3;
-        object-fit: cover;
+        border: 1px solid #ffffff1a;
         background: #11172b;
+        aspect-ratio: 2/3;
+        object-fit: cover;
       }
 
       .title {
         margin: 0 0 10px;
-        font-size: clamp(1.2rem, 2.4vw, 1.8rem);
+        font-size: clamp(1.18rem, 2.2vw, 1.84rem);
       }
 
       .chips {
@@ -161,31 +171,29 @@
       }
 
       .chip {
-        background: #202b4f;
-        border: 1px solid rgba(255, 255, 255, 0.09);
         border-radius: 999px;
+        border: 1px solid #ffffff1c;
+        background: #202f57;
+        color: #dce5ff;
         padding: 6px 12px;
         font-size: 0.86rem;
-        color: #d3dcff;
       }
 
       .desc {
         margin: 0;
-        color: #dfe6ff;
-        line-height: 1.52;
+        line-height: 1.54;
+        color: #e6edff;
       }
 
       .imdb-link {
-        margin-top: 12px;
         display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: #f5c518;
-        color: #1a1a1a;
+        margin-top: 12px;
         text-decoration: none;
-        font-weight: 700;
-        padding: 10px 14px;
+        font-weight: 800;
+        color: #191919;
+        background: #f5c518;
         border-radius: 10px;
+        padding: 10px 14px;
       }
 
       @media (max-width: 760px) {
@@ -200,22 +208,22 @@
     </style>
   </head>
   <body>
-    <main class="container">
+    <main class="app">
       <section class="hero">
-        <h1>🎬 MaxVibeFilms — IMDb Рандомайзер</h1>
+        <h1>🎬 MaxVibeFilms — IMDb randomizer</h1>
         <p class="subtitle">
-          Нажмите «Рандом», чтобы выбрать случайный год (1975–2025), найти фильмы IMDb за этот год и получить случайный фильм
-          из топ-50 списка.
+          Нажмите «Рандом», и приложение подберёт случайный год (1975–2025), откроет IMDb-поиск за этот год и выберет случайный
+          фильм из первых 50 позиций.
         </p>
 
         <div class="controls">
-          <button id="randomBtn" type="button">Рандом</button>
+          <button class="btn" id="randomBtn" type="button">Рандом</button>
           <a id="searchLink" class="link-btn" target="_blank" rel="noopener noreferrer">Открыть IMDb-поиск</a>
         </div>
 
         <div class="meta">
           <div>Выбранный год: <strong id="selectedYear">—</strong></div>
-          <div>Позиция в IMDb-поиске: <strong id="selectedRank">—</strong></div>
+          <div>Позиция в списке: <strong id="selectedRank">—</strong></div>
         </div>
 
         <div id="status" class="status" aria-live="polite"></div>
