@@ -17,6 +17,7 @@ const rankChipEl = document.getElementById('rankChip');
 const descriptionEl = document.getElementById('description');
 const posterEl = document.getElementById('poster');
 const movieLinkEl = document.getElementById('movieLink');
+const watchLinkEl = document.getElementById('watchLink');
 
 const parser = new DOMParser();
 
@@ -52,6 +53,10 @@ function numberWithSpaces(value) {
 
 function buildSearchUrl(year) {
   return `https://www.imdb.com/search/title/?title_type=feature&release_date=${year}-01-01,${year}-12-31`;
+}
+
+function cleanText(value) {
+  return (value || '').replace(/\s+/g, ' ').trim();
 }
 
 async function fetchWithFallback(url, label) {
@@ -105,7 +110,7 @@ function extractMoviesFromSearchHtml(html) {
     const id = idMatch[1];
     if (seen.has(id)) continue;
 
-    const title = link.textContent?.trim();
+    const title = cleanText(link.textContent);
     if (!title) continue;
 
     seen.add(id);
@@ -131,7 +136,7 @@ function extractMoviesFromSearchHtml(html) {
       const id = idMatch[1];
       if (seen.has(id)) continue;
 
-      const title = link.textContent?.trim();
+      const title = cleanText(link.textContent);
       if (!title || /^(episodes?|photos?|cast|more)$/i.test(title)) continue;
 
       seen.add(id);
@@ -178,18 +183,18 @@ function extractMovieDetails(html) {
     }
   }
 
-  const title = movieJson?.name || doc.querySelector('h1')?.textContent?.trim() || '';
-  const rating = movieJson?.aggregateRating?.ratingValue || '';
-  const votes = movieJson?.aggregateRating?.ratingCount || '';
-  const image = movieJson?.image || '';
-  const description = movieJson?.description || '';
+  const originalTitle = cleanText(movieJson?.name || doc.querySelector('h1')?.textContent || '');
+  const rating = cleanText(String(movieJson?.aggregateRating?.ratingValue || ''));
+  const votes = cleanText(String(movieJson?.aggregateRating?.ratingCount || ''));
+  const image = cleanText(String(movieJson?.image || ''));
+  const description = cleanText(movieJson?.description || '');
 
-  return { title, rating, votes, image, description };
+  return { originalTitle, rating, votes, image, description };
 }
 
 async function translateToRussian(text) {
   if (!text || !text.trim()) {
-    throw new Error('Отсутствует описание для перевода');
+    throw new Error('Отсутствует текст для перевода');
   }
 
   const cleaned = text.trim();
@@ -227,27 +232,75 @@ async function translateToRussian(text) {
   return `${cleaned} (автоперевод недоступен)`;
 }
 
-function validateMovie(details) {
-  if (!details.title || !details.title.trim()) {
-    throw new Error('У фильма отсутствует название');
+function extractKpId(html) {
+  const matches = html.match(/\/film\/(\d+)\//g) || [];
+  for (const match of matches) {
+    const idMatch = match.match(/\/(\d+)\//);
+    if (idMatch && idMatch[1]) {
+      return idMatch[1];
+    }
+  }
+  return '';
+}
+
+async function findKinopoiskData(movie, details, year) {
+  const query = encodeURIComponent(`${details.originalTitle} ${year}`);
+  const searchUrl = `https://www.kinopoisk.ru/index.php?kp_query=${query}`;
+
+  const response = await fetchWithFallback(searchUrl, 'поиск на Кинопоиске');
+  const kpId = extractKpId(response.text);
+
+  if (!kpId) {
+    throw new Error('Не удалось найти карточку фильма на Кинопоиске');
+  }
+
+  const kpUrl = `https://www.kinopoisk.ru/film/${kpId}/`;
+  const kkUrl = `https://www.kkpoisk.ru/film/${kpId}/`;
+
+  let russianTitle = '';
+  try {
+    const kpPage = await fetchWithFallback(kpUrl, `страница Кинопоиска ${kpId}`);
+    const doc = parser.parseFromString(kpPage.text, 'text/html');
+    russianTitle = cleanText(doc.querySelector('h1')?.textContent || doc.querySelector('title')?.textContent || '');
+    russianTitle = russianTitle.replace(/\s*\(Кинопоиск\).*$/i, '').trim();
+  } catch {
+    russianTitle = '';
+  }
+
+  if (!russianTitle) {
+    russianTitle = await translateToRussian(details.originalTitle || movie.title);
+  }
+
+  return { kpId, kpUrl, kkUrl, russianTitle };
+}
+
+function validateMovie(details, kinopoiskData) {
+  if (!details.originalTitle || !details.originalTitle.trim()) {
+    throw new Error('У фильма отсутствует оригинальное название');
   }
 
   if (!details.description || !details.description.trim()) {
     throw new Error('У фильма отсутствует описание');
   }
+
+  if (!kinopoiskData?.kkUrl) {
+    throw new Error('Не подготовлена ссылка для кнопки «СМОТРЕТЬ»');
+  }
 }
 
-function renderMovieCard(movie, details, year, rank) {
-  titleEl.textContent = details.title;
+function renderMovieCard(movie, details, year, rank, kinopoiskData) {
+  titleEl.textContent = `${details.originalTitle} (${kinopoiskData.russianTitle})`;
   ratingChipEl.textContent = `IMDb: ${details.rating || '—'}`;
   votesChipEl.textContent = `Оценок: ${numberWithSpaces(details.votes)}`;
   rankChipEl.textContent = `Позиция: ТОП ${rank}`;
   descriptionEl.textContent = details.description;
 
   posterEl.src = details.image || 'https://placehold.co/400x600/11172b/e8eeff?text=Нет+постера';
-  posterEl.alt = `Постер: ${details.title}`;
+  posterEl.alt = `Постер: ${details.originalTitle}`;
 
   movieLinkEl.href = movie.url;
+  watchLinkEl.href = kinopoiskData.kkUrl;
+  watchLinkEl.classList.remove('hidden');
 
   selectedYearEl.textContent = String(year);
   selectedRankEl.textContent = `ТОП ${rank}`;
@@ -262,6 +315,7 @@ async function performSearchAttempt(attempt, totalAttempts) {
   selectedRankEl.textContent = '—';
   searchLink.href = searchUrl;
   searchLink.style.display = 'inline-flex';
+  watchLinkEl.classList.add('hidden');
 
   setStatus(`Попытка ${attempt}/${totalAttempts}: ищем фильмы за ${year} год...`, 'warning');
   const searchResponse = await fetchWithFallback(searchUrl, 'поиск IMDb');
@@ -280,9 +334,13 @@ async function performSearchAttempt(attempt, totalAttempts) {
   const details = extractMovieDetails(movieResponse.text);
 
   details.description = await translateToRussian(details.description || '');
-  validateMovie(details);
 
-  return { movie, details, year, rank };
+  setStatus(`Ищем этот фильм на Кинопоиске для кнопки «СМОТРЕТЬ»...`, 'warning');
+  const kinopoiskData = await findKinopoiskData(movie, details, year);
+
+  validateMovie(details, kinopoiskData);
+
+  return { movie, details, year, rank, kinopoiskData };
 }
 
 async function handleRandomClick() {
@@ -294,7 +352,7 @@ async function handleRandomClick() {
   for (let attempt = 1; attempt <= MAX_SEARCH_RETRIES; attempt += 1) {
     try {
       const result = await performSearchAttempt(attempt, MAX_SEARCH_RETRIES);
-      renderMovieCard(result.movie, result.details, result.year, result.rank);
+      renderMovieCard(result.movie, result.details, result.year, result.rank, result.kinopoiskData);
       setStatus(`Готово! Фильм найден с попытки ${attempt}. Приятного просмотра ✨`, 'good');
       randomBtn.disabled = false;
       return;
